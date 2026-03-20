@@ -13,6 +13,8 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+//this is a try for git
+
 class ChatServer {
 private:
     std::map<int, SOCKET> clientMap;
