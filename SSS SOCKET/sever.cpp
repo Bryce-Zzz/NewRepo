@@ -9,8 +9,9 @@
 #include <iomanip>    
 #include <vector>
 #include <random>     
-#include <set>        // 新增：用于存放正在修改密码的客户端集合
-#include <list>       // 新增：用于排队队列
+#include <set>        
+#include <list>       
+#include <cstdint>    // 新增：用于 uint16_t
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <sw/redis++/redis++.h>
@@ -37,30 +38,80 @@ private:
     std::map<int, SOCKET> pendingResetSockets;
     std::mutex pendingMutex;
 
-    // --- 【新增】：限流与排队机制 ---
-    std::set<SOCKET> resettingSockets;                 // 当前正在占用名额的 Socket (上限3个)
-    std::list<std::pair<int, SOCKET>> resetWaitQueue;  // 等待队列
-    std::mutex resetMutex;                             // 保护限流队列的锁
+    std::set<SOCKET> resettingSockets;
+    std::list<std::pair<int, SOCKET>> resetWaitQueue;
+    std::mutex resetMutex;
 
-    std::set<int> activeResetIds;               // 新增：记录正在被修改密码的账号ID (防止同ID并发)
-    std::map<SOCKET, int> resettingIdsMap;      // 新增：记录 Socket 对应正在修改哪个账号
+    std::set<int> activeResetIds;
+    std::map<SOCKET, int> resettingIdsMap;
 
-    // 释放修改密码名额，并自动叫号下一个
+    // ================== 【新增：核心网络收发引擎】 ==================
+    // 1. 发送定长包头数据
+    bool SendPacket(SOCKET sock, const std::string& msg) {
+        if (msg.empty()) return true;
+        // htons: Host TO Network Short (转为网络统一的字节序)
+        uint16_t net_len = htons(static_cast<uint16_t>(msg.length()));
+        std::string packet;
+        packet.append(reinterpret_cast<char*>(&net_len), 2); // 塞入 2 字节包头
+        packet.append(msg);                                  // 塞入真实数据
+
+        int totalSent = 0;
+        int packetLen = packet.length();
+        while (totalSent < packetLen) {
+            int sent = send(sock, packet.c_str() + totalSent, packetLen - totalSent, 0);
+            if (sent <= 0) return false;
+            totalSent += sent;
+        }
+        return true;
+    }
+
+    // 2. 严谨接收指定长度数据 (返回值: 1成功, 0正常断开, -1异常)
+    int RecvExactly(SOCKET sock, char* buf, int len) {
+        int totalRecv = 0;
+        while (totalRecv < len) {
+            int r = recv(sock, buf + totalRecv, len - totalRecv, 0);
+            if (r == 0) return 0;  // 客户端优雅退出
+            if (r < 0) return -1;  // 异常断开
+            totalRecv += r;
+        }
+        return 1;
+    }
+
+    // 3. 完整解包机制
+    int RecvPacket(SOCKET sock, std::string& msg) {
+        uint16_t net_len = 0;
+        // 第一步：先读 2 字节包头
+        int r = RecvExactly(sock, reinterpret_cast<char*>(&net_len), 2);
+        if (r <= 0) return r;
+
+        // ntohs: Network TO Host Short (解析出真实长度)
+        uint16_t host_len = ntohs(net_len);
+        if (host_len == 0) {
+            msg = "";
+            return 1;
+        }
+
+        // 第二步：根据真实长度，精准读取消息体
+        std::vector<char> buffer(host_len);
+        r = RecvExactly(sock, buffer.data(), host_len);
+        if (r <= 0) return r;
+
+        msg = std::string(buffer.data(), host_len);
+        return 1;
+    }
+    // ================================================================
+
     void ReleaseResetSlot(SOCKET sock) {
         std::lock_guard<std::mutex> lock(resetMutex);
 
-        // 【新增】：清理正在修改的 ID 记录
         if (resettingIdsMap.count(sock)) {
             activeResetIds.erase(resettingIdsMap[sock]);
             resettingIdsMap.erase(sock);
         }
 
-        // 如果这个 Socket 在排队，直接移除
         resetWaitQueue.remove_if([sock](const std::pair<int, SOCKET>& p) { return p.second == sock; });
 
-        // 如果这个 Socket 占用了名额，释放它
         if (resettingSockets.erase(sock)) {
-            // 名额释放了，看看有没有人排队，叫号！
             if (!resetWaitQueue.empty()) {
                 auto pending = resetWaitQueue.front();
                 resetWaitQueue.pop_front();
@@ -72,7 +123,7 @@ private:
                 }
 
                 std::string reply = "WAIT_OK|已为您分配到重置名额！";
-                send(pending.second, reply.c_str(), reply.length(), 0);
+                SendPacket(pending.second, reply); // 【替换】
                 PrintLog("[权限审批] 客户端排队完成，请求重置账号 " + std::to_string(pending.first) + " 的密码。同意请在控制台输入: /yes " + std::to_string(pending.first));
             }
         }
@@ -112,7 +163,6 @@ private:
         localtime_s(&tm_info, &t);
 
         std::lock_guard<std::mutex> lock(consoleMutex);
-        // 【优化 2】：去掉了开头的 \n，输出更加紧凑美观
         std::cout << logMsg << "\n" << serverPrompt;
 
         if (logFile.is_open()) {
@@ -167,29 +217,28 @@ private:
     }
 
     void HandleClient(SOCKET clientSocket, sockaddr_in clientAddr) {
-        char buffer[1024];
         bool isAuthenticated = false;
         int currentUserId = -1;
         std::string currentName = "";
 
+        // ================= 阶段一：鉴权逻辑 (完美重构版) =================
         while (!isAuthenticated) {
-            memset(buffer, 0, sizeof(buffer));
-            int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+            std::string msg;
+            int r = RecvPacket(clientSocket, msg); // 【核心】：一行代码完美收包
 
-            if (bytesReceived <= 0) {
-                ReleaseResetSlot(clientSocket); // 异常断开时释放排队名额
+            if (r <= 0) {
+                ReleaseResetSlot(clientSocket);
                 closesocket(clientSocket);
                 return;
             }
 
-            std::string msg(buffer);
             std::vector<std::string> parts = SplitString(msg, "|");
             if (parts.empty()) continue;
 
             if (parts[0] == "GET_NEXT_ID") {
                 std::lock_guard<std::mutex> lock(mapMutex);
                 std::string reply = "NEXT_ID|" + std::to_string(nextUserId);
-                send(clientSocket, reply.c_str(), reply.length(), 0);
+                SendPacket(clientSocket, reply);
             }
             else if (parts[0] == "REG" && parts.size() == 4) {
                 int id = std::stoi(parts[1]);
@@ -197,8 +246,7 @@ private:
                 std::string name = parts[3];
                 std::lock_guard<std::mutex> lock(mapMutex);
                 if (registeredUsers.count(id) > 0) {
-                    std::string reply = "REG_FAIL|手慢了！该ID已被抢注。";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "REG_FAIL|手慢了！该ID已被抢注。");
                     continue;
                 }
                 bool isNameTaken = false;
@@ -206,15 +254,13 @@ private:
                     if (pair.second.second == name) { isNameTaken = true; break; }
                 }
                 if (isNameTaken) {
-                    std::string reply = "REG_FAIL|该昵称已被占用！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "REG_FAIL|该昵称已被占用！");
                 }
                 else {
                     registeredUsers[id] = std::make_pair(pwd, name);
                     if (id >= nextUserId) nextUserId = id + 1;
                     SaveNewUser(id, pwd, name);
-                    std::string reply = "REG_OK|注册成功！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "REG_OK|注册成功！");
                     PrintLog("[系统] 新用户注册成功: ID=" + std::to_string(id) + "，昵称=[" + name + "]");
                 }
             }
@@ -223,45 +269,35 @@ private:
                 std::string pwd = parts[2];
                 std::lock_guard<std::mutex> lock(mapMutex);
                 if (registeredUsers.count(id) == 0) {
-                    std::string reply = "LOGIN_FAIL|账号不存在！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "LOGIN_FAIL|账号不存在！");
                 }
                 else if (registeredUsers[id].first != pwd) {
-                    std::string reply = "LOGIN_FAIL|密码错误！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "LOGIN_FAIL|密码错误！");
                 }
                 else if (clientMap.count(id) > 0) {
-                    std::string reply = "LOGIN_FAIL|该账号当前已在线！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "LOGIN_FAIL|该账号当前已在线！");
                 }
                 else {
                     currentUserId = id; currentName = registeredUsers[id].second; isAuthenticated = true;
-                    std::string reply = "LOGIN_OK|" + currentName;
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "LOGIN_OK|" + currentName);
                 }
             }
             else if (parts[0] == "FORGOT_PWD" && parts.size() == 2) {
                 int targetId = std::stoi(parts[1]);
                 std::lock_guard<std::mutex> lock(mapMutex);
                 if (registeredUsers.count(targetId) == 0) {
-                    std::string reply = "FORGOT_FAIL|账号不存在，请检查ID！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "FORGOT_FAIL|账号不存在，请检查ID！");
                 }
                 else {
                     std::lock_guard<std::mutex> rLock(resetMutex);
-                    // 【新增核心逻辑 1】：检查是否已有其他人在修改这个 ID
                     if (activeResetIds.count(targetId)) {
-                        std::string reply = "FORGOT_FAIL|该账号的密码正在被其他客户端修改，禁止并发操作！";
-                        send(clientSocket, reply.c_str(), reply.length(), 0);
+                        SendPacket(clientSocket, "FORGOT_FAIL|该账号的密码正在被修改，禁止并发！");
                     }
                     else {
-                        // 登记这个 ID 和 Socket
                         activeResetIds.insert(targetId);
                         resettingIdsMap[clientSocket] = targetId;
-
                         if (resettingSockets.size() >= 3) {
-                            std::string reply = "FORGOT_BUSY|当前修改密码服务繁忙 (已达上限3人)，是否排队等待？";
-                            send(clientSocket, reply.c_str(), reply.length(), 0);
+                            SendPacket(clientSocket, "FORGOT_BUSY|当前修改密码服务繁忙(已达3人)，是否排队等待？");
                         }
                         else {
                             resettingSockets.insert(clientSocket);
@@ -274,28 +310,23 @@ private:
                     }
                 }
             }
-            // 客户端确认等待
             else if (parts[0] == "FORGOT_WAIT" && parts.size() == 2) {
                 int targetId = std::stoi(parts[1]);
                 std::lock_guard<std::mutex> rLock(resetMutex);
                 if (resettingSockets.size() < 3) {
-                    // 运气好，刚决定排队就有人释放了名额
                     resettingSockets.insert(clientSocket);
                     {
                         std::lock_guard<std::mutex> pLock(pendingMutex);
                         pendingResetSockets[targetId] = clientSocket;
                     }
-                    std::string reply = "WAIT_OK|刚好有名额释放，已为您分配！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "WAIT_OK|刚好有名额释放，已为您分配！");
                     PrintLog("[权限审批] 客户端请求重置账号 " + std::to_string(targetId) + " 的密码。同意请在控制台输入: /yes " + std::to_string(targetId));
                 }
                 else {
                     resetWaitQueue.push_back({ targetId, clientSocket });
-                    std::string reply = "WAITING|";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "WAITING|");
                 }
             }
-            // 客户端取消等待
             else if (parts[0] == "FORGOT_CANCEL") {
                 ReleaseResetSlot(clientSocket);
             }
@@ -308,22 +339,18 @@ private:
                     std::lock_guard<std::mutex> lock(mapMutex);
                     registeredUsers[targetId].first = newPwd;
                     SaveAllUsers();
-                    std::string reply = "RESET_OK|密码修改成功，请重新登录！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "RESET_OK|密码修改成功，请重新登录！");
                     PrintLog("[系统] 账号 " + std::to_string(targetId) + " 密码已成功重置。");
                 }
                 else {
-                    std::string reply = "RESET_FAIL|验证码错误或已过期(有效时长5分钟)！";
-                    send(clientSocket, reply.c_str(), reply.length(), 0);
+                    SendPacket(clientSocket, "RESET_FAIL|验证码错误或已过期(有效时长1分钟)！");
                     PrintLog("[系统警告] 账号 " + std::to_string(targetId) + " 尝试使用错误/过期的验证码重置密码。");
                 }
-                // 处理完无论成功失败，都释放名额给别人
                 ReleaseResetSlot(clientSocket);
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
+        // ================= 阶段二：聊天大厅 (完美重构版) =================
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             clientMap[currentUserId] = clientSocket;
@@ -337,17 +364,16 @@ private:
             std::lock_guard<std::mutex> lock(mapMutex);
             for (auto const& pair : clientMap) {
                 if (pair.first != currentUserId) {
-                    send(pair.second, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+                    SendPacket(pair.second, welcomeMsg);
                 }
             }
         }
 
         while (true) {
-            memset(buffer, 0, sizeof(buffer));
-            int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+            std::string receivedStr;
+            int r = RecvPacket(clientSocket, receivedStr);
 
-            if (bytesReceived > 0) {
-                std::string receivedStr(buffer);
+            if (r == 1) { // 成功收到包
                 std::string actualName;
                 {
                     std::lock_guard<std::mutex> lock(mapMutex);
@@ -364,22 +390,19 @@ private:
                     }
 
                     if (isNameTaken) {
-                        std::string errMsg = "[系统提示]: 改名失败，昵称 [" + newName + "] 已被占用！";
-                        send(clientSocket, errMsg.c_str(), errMsg.length(), 0);
+                        SendPacket(clientSocket, "[系统提示]: 改名失败，昵称 [" + newName + "] 已被占用！");
                     }
                     else {
                         nameMap[currentUserId] = newName;
                         registeredUsers[currentUserId].second = newName;
                         SaveAllUsers();
 
-                        std::string ackMsg = "NICK_ACK:" + newName;
-                        send(clientSocket, ackMsg.c_str(), ackMsg.length(), 0);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        SendPacket(clientSocket, "NICK_ACK:" + newName);
 
                         std::string noticeMsg = "[系统广播]: [" + actualName + "] 已改名为 [" + newName + "]";
                         PrintLog("[监察-改名] " + noticeMsg);
                         for (auto const& pair : clientMap) {
-                            send(pair.second, noticeMsg.c_str(), noticeMsg.length(), 0);
+                            SendPacket(pair.second, noticeMsg);
                         }
                     }
                     continue;
@@ -407,14 +430,12 @@ private:
 
                         if (targetId != -1 && clientMap.count(targetId)) {
                             std::string forwardMsg = "[" + actualName + "] 私聊你: " + actualMsg;
-                            send(clientMap[targetId], forwardMsg.c_str(), forwardMsg.length(), 0);
-                            std::string successMsg = "[系统提示]: 成功发送私聊给 [" + nameMap[targetId] + "]";
-                            send(clientSocket, successMsg.c_str(), successMsg.length(), 0);
+                            SendPacket(clientMap[targetId], forwardMsg);
+                            SendPacket(clientSocket, "[系统提示]: 成功发送私聊给 [" + nameMap[targetId] + "]");
                             PrintLog("[监察-私聊] [" + actualName + "] -> [" + nameMap[targetId] + "]: " + actualMsg);
                         }
                         else {
-                            std::string errMsg = "[系统提示]: 找不到目标用户。";
-                            send(clientSocket, errMsg.c_str(), errMsg.length(), 0);
+                            SendPacket(clientSocket, "[系统提示]: 找不到目标用户。");
                         }
                     }
                 }
@@ -424,13 +445,12 @@ private:
                     std::lock_guard<std::mutex> lock(mapMutex);
                     for (auto const& pair : clientMap) {
                         if (pair.first != currentUserId) {
-                            send(pair.second, broadcastMsg.c_str(), broadcastMsg.length(), 0);
+                            SendPacket(pair.second, broadcastMsg);
                         }
                     }
                 }
             }
-            // 【恢复】：准确识别正常断开 (quit)
-            else if (bytesReceived == 0) {
+            else if (r == 0) { // 正常断开
                 std::string lastName = "未知用户";
                 {
                     std::lock_guard<std::mutex> lock(mapMutex);
@@ -439,8 +459,7 @@ private:
                 PrintLog("[-] 客户端 [" + lastName + "] (ID:" + std::to_string(currentUserId) + ") 正常断开连接。");
                 break;
             }
-            // 【恢复】：准确识别异常断开 (直接点X关闭黑框)
-            else {
+            else { // 异常断开
                 int errorCode = WSAGetLastError();
                 std::string lastName = "未知用户";
                 {
@@ -452,7 +471,6 @@ private:
             }
         }
 
-        // --- 收尾清理 ---
         ReleaseResetSlot(clientSocket);
         {
             std::lock_guard<std::mutex> pLock(pendingMutex);
@@ -486,7 +504,7 @@ private:
             if (userInput.substr(0, 5) == "/yes ") {
                 try {
                     int targetId = std::stoi(userInput.substr(5));
-                    SOCKET targetSock = INVALID_SOCKET; // 暂存 socket
+                    SOCKET targetSock = INVALID_SOCKET;
                     {
                         std::lock_guard<std::mutex> pLock(pendingMutex);
                         if (pendingResetSockets.count(targetId)) {
@@ -494,10 +512,9 @@ private:
                             int randomNum = 100000 + rand() % 900000;
                             std::string code = std::to_string(randomNum);
 
-                            Redis_SetEx(targetId, code, 60); // 【修改】：验证码在 Redis 中改为 60 秒过期
+                            Redis_SetEx(targetId, code, 60);
 
-                            std::string reply = "FORGOT_OK|" + code;
-                            send(targetSock, reply.c_str(), reply.length(), 0);
+                            SendPacket(targetSock, "FORGOT_OK|" + code);
                             pendingResetSockets.erase(targetId);
 
                             PrintLog("[系统] 已同意请求。验证码 【" + code + "】 已存入Redis并下发 (60秒有效)。");
@@ -507,25 +524,20 @@ private:
                         }
                     }
 
-                    // 【新增核心逻辑 2】：下发验证码后，启动一个 60 秒的定时炸弹
                     if (targetSock != INVALID_SOCKET) {
                         std::thread([this, targetSock, targetId]() {
-                            std::this_thread::sleep_for(std::chrono::seconds(60)); // 倒计时一分钟
+                            std::this_thread::sleep_for(std::chrono::seconds(60));
 
                             bool isStillResetting = false;
                             {
                                 std::lock_guard<std::mutex> rLock(resetMutex);
-                                // 如果 60 秒后它还在修改密码状态（没提交完成、没点取消），则判定为超时
                                 if (resettingIdsMap.count(targetSock) && resettingIdsMap[targetSock] == targetId) {
                                     isStillResetting = true;
                                 }
                             }
                             if (isStillResetting) {
                                 PrintLog("[系统监控] 账号 " + std::to_string(targetId) + " 验证码输入超时 (超1分钟)，已取消重置并释放名额！");
-                                // 下发超时信号
-                                std::string timeoutMsg = "RESET_TIMEOUT|";
-                                send(targetSock, timeoutMsg.c_str(), timeoutMsg.length(), 0);
-                                // 优雅地释放名额，不断开 Socket
+                                SendPacket(targetSock, "RESET_TIMEOUT|");
                                 ReleaseResetSlot(targetSock);
                             }
                             }).detach();
@@ -622,7 +634,7 @@ private:
                     }
 
                     if (targetId != -1 && clientMap.count(targetId)) {
-                        send(clientMap[targetId], fullMsg.c_str(), fullMsg.length(), 0);
+                        SendPacket(clientMap[targetId], fullMsg);
                         PrintLog("[系统] 已成功发送私聊给 [" + nameMap[targetId] + "]");
                     }
                     else {
@@ -635,7 +647,7 @@ private:
             std::string fullMsg = "[服务器端] 群发: " + userInput;
             std::lock_guard<std::mutex> lock(mapMutex);
             for (auto const& pair : clientMap) {
-                send(pair.second, fullMsg.c_str(), fullMsg.length(), 0);
+                SendPacket(pair.second, fullMsg);
             }
             PrintLog("[系统广播] 已发送");
         }
@@ -666,7 +678,7 @@ public:
         return true;
     }
     void Run() {
-        std::cout << "=== 聊天服务器 (加入排队降级架构) 已启动 ===" << std::endl;
+        std::cout << "=== 聊天服务器 (加入2字节定长包头 防粘包引擎) 已启动 ===" << std::endl;
         std::cout << "可用指令：\n  /yes <ID> (审批通过并生成验证码)\n  /showusers (查看所有已注册用户)\n  /clearall (删库并踢出所有人)\n  /del <ID> (封号删档)\n  @ID或昵称 (服务端单独私聊)\n" << std::endl;
         std::cout << serverPrompt;
 

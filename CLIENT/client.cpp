@@ -8,6 +8,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <conio.h>
+#include <cstdint>  // 用于 uint16_t
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -20,6 +21,55 @@ private:
     std::string myId;
     std::string myName;
     bool isConnected;
+
+    // ================== 【新增：核心网络收发引擎】 ==================
+    bool SendPacket(SOCKET sock, const std::string& msg) {
+        if (msg.empty()) return true;
+        uint16_t net_len = htons(static_cast<uint16_t>(msg.length()));
+        std::string packet;
+        packet.append(reinterpret_cast<char*>(&net_len), 2);
+        packet.append(msg);
+
+        int totalSent = 0;
+        int packetLen = packet.length();
+        while (totalSent < packetLen) {
+            int sent = send(sock, packet.c_str() + totalSent, packetLen - totalSent, 0);
+            if (sent <= 0) return false;
+            totalSent += sent;
+        }
+        return true;
+    }
+
+    int RecvExactly(SOCKET sock, char* buf, int len) {
+        int totalRecv = 0;
+        while (totalRecv < len) {
+            int r = recv(sock, buf + totalRecv, len - totalRecv, 0);
+            if (r == 0) return 0;
+            if (r < 0) return -1;
+            totalRecv += r;
+        }
+        return 1;
+    }
+
+    int RecvPacket(SOCKET sock, std::string& msg) {
+        uint16_t net_len = 0;
+        int r = RecvExactly(sock, reinterpret_cast<char*>(&net_len), 2);
+        if (r <= 0) return r;
+
+        uint16_t host_len = ntohs(net_len);
+        if (host_len == 0) {
+            msg = "";
+            return 1;
+        }
+
+        std::vector<char> buffer(host_len);
+        r = RecvExactly(sock, buffer.data(), host_len);
+        if (r <= 0) return r;
+
+        msg = std::string(buffer.data(), host_len);
+        return 1;
+    }
+    // ================================================================
 
     // 智能输入函数：一边等键盘打字，一边盯紧服务器
     bool GetInputWithMonitor(std::string& input) {
@@ -74,13 +124,11 @@ private:
     }
 
     void ReceiveMessages() {
-        char buffer[1024];
         while (isConnected) {
-            memset(buffer, 0, sizeof(buffer));
-            int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+            std::string msg;
+            int r = RecvPacket(clientSocket, msg); // 【核心】：用包引擎替换原生 recv
 
-            if (bytesReceived > 0) {
-                std::string msg(buffer);
+            if (r == 1) {
                 if (msg.substr(0, 9) == "NICK_ACK:") {
                     std::string newName = msg.substr(9);
                     currentPrompt = "[" + newName + "] > ";
@@ -91,7 +139,6 @@ private:
                 }
             }
             else {
-                // 【优化 1】：只处理异常断开，正常的 quit 不在这里打印多余信息
                 if (isConnected) {
                     std::cout << "\n[!] 与服务端的连接已异常断开。" << std::endl;
                     isConnected = false;
@@ -129,6 +176,7 @@ public:
         return true;
     }
 
+    //主体框架继承的是一个登录系统
     bool AuthMenu() {
         while (isConnected) {
             system("cls");
@@ -162,11 +210,10 @@ public:
                 std::cout << "请输入密码: "; std::cin >> pwd;
 
                 std::string req = "LOGIN|" + id + "|" + pwd;
-                send(clientSocket, req.c_str(), req.length(), 0);
+                SendPacket(clientSocket, req);
 
-                char buffer[256] = { 0 };
-                recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                std::string res(buffer);
+                std::string res;
+                RecvPacket(clientSocket, res);
                 std::vector<std::string> parts = SplitString(res, "|");
 
                 if (parts.size() >= 2 && parts[0] == "LOGIN_OK") {
@@ -183,12 +230,10 @@ public:
                 }
             }
             else if (choice == 2) {
-                std::string reqId = "GET_NEXT_ID";
-                send(clientSocket, reqId.c_str(), reqId.length(), 0);
+                SendPacket(clientSocket, "GET_NEXT_ID");
 
-                char buffer[256] = { 0 };
-                recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                std::string res(buffer);
+                std::string res;
+                RecvPacket(clientSocket, res);
                 std::vector<std::string> parts = SplitString(res, "|");
 
                 if (parts.size() >= 2 && parts[0] == "NEXT_ID") {
@@ -202,11 +247,10 @@ public:
                     std::cout << "设置昵称: "; std::cin >> name;
 
                     std::string req = "REG|" + preAssignedId + "|" + pwd + "|" + name;
-                    send(clientSocket, req.c_str(), req.length(), 0);
+                    SendPacket(clientSocket, req);
 
-                    memset(buffer, 0, sizeof(buffer));
-                    recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                    std::string regRes(buffer);
+                    std::string regRes;
+                    RecvPacket(clientSocket, regRes);
                     std::vector<std::string> regParts = SplitString(regRes, "|");
 
                     if (regParts.size() >= 2) {
@@ -226,15 +270,11 @@ public:
                 std::cin >> id;
 
                 // 1. 发起申请
-                std::string req = "FORGOT_PWD|" + id;
-                send(clientSocket, req.c_str(), req.length(), 0);
-
-                // 【温馨提示 1】：刚发起请求时的提示
+                SendPacket(clientSocket, "FORGOT_PWD|" + id);
                 std::cout << "[系统温馨提示] 重置请求已发送，正在等待服务器处理...\n";
 
-                char buffer[256] = { 0 };
-                recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                std::string res(buffer);
+                std::string res;
+                RecvPacket(clientSocket, res);
                 std::vector<std::string> parts = SplitString(res, "|");
 
                 // --- 处理限流排队 ---
@@ -244,40 +284,32 @@ public:
                     std::cin >> waitChoice;
 
                     if (waitChoice == 'Y' || waitChoice == 'y') {
-                        std::string waitReq = "FORGOT_WAIT|" + id;
-                        send(clientSocket, waitReq.c_str(), waitReq.length(), 0);
+                        SendPacket(clientSocket, "FORGOT_WAIT|" + id);
 
                         bool waiting = true;
                         while (waiting) {
-                            memset(buffer, 0, sizeof(buffer));
-                            int r = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                            if (r <= 0) break;
+                            std::string wRes;
+                            if (RecvPacket(clientSocket, wRes) <= 0) break;
 
-                            std::string wRes(buffer);
                             auto wParts = SplitString(wRes, "|");
                             if (wParts.empty()) continue;
 
                             if (wParts[0] == "WAITING") {
-                                // 【温馨提示 2】：修复了这里的静默等待，给出明确的排队反馈！
                                 std::cout << "\n[系统温馨提示] 当前排队人数较多，您已成功加入队列，请耐心排队等待...\n";
                             }
                             else if (wParts[0] == "WAIT_OK") {
-                                // 【温馨提示 3】：排队成功，拿到名额的提示
                                 std::cout << "\n[系统温馨提示] " << wParts[1] << " 请等待管理员审批下发验证码...\n";
                                 waiting = false;
                             }
                         }
 
                         // 排队成功后，重新等待 FORGOT_OK (短信)
-                        memset(buffer, 0, sizeof(buffer));
-                        recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                        res = std::string(buffer);
+                        RecvPacket(clientSocket, res);
                         parts = SplitString(res, "|");
                     }
                     else {
                         // 【温馨提示 4】：取消排队的提示
-                        std::string cancelReq = "FORGOT_CANCEL|" + id;
-                        send(clientSocket, cancelReq.c_str(), cancelReq.length(), 0);
+                        SendPacket(clientSocket, "FORGOT_CANCEL|" + id);
                         std::cout << "\n[温馨提示] 您已取消排队，将为您返回主菜单。\n\n";
                         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
                         system("pause");
@@ -298,8 +330,8 @@ public:
                         _getch(); // 等待用户随便按个键
 
                         // 把服务器发来的 RESET_TIMEOUT 取走，清理网络管道
-                        char flushBuf[256] = { 0 };
-                        recv(clientSocket, flushBuf, sizeof(flushBuf) - 1, 0);
+                        std::string trash;
+                        RecvPacket(clientSocket, trash);
                         };
 
                     std::string inputCode, pwd1, pwd2;
@@ -317,19 +349,16 @@ public:
                     if (pwd1 != pwd2) {
                         std::cout << "\n[错误提示] 两次输入的密码不一致！修改已取消。\n\n";
                         // 通知服务端释放名额
-                        std::string cancelReq = "FORGOT_CANCEL|" + id;
-                        send(clientSocket, cancelReq.c_str(), cancelReq.length(), 0);
+                        SendPacket(clientSocket, "FORGOT_CANCEL|" + id);
                         system("pause");
                         continue;
                     }
 
                     // 提交给服务端进行 Redis 验证
-                    std::string resetReq = "RESET_PWD|" + id + "|" + inputCode + "|" + pwd1;
-                    send(clientSocket, resetReq.c_str(), resetReq.length(), 0);
+                    SendPacket(clientSocket, "RESET_PWD|" + id + "|" + inputCode + "|" + pwd1);
 
-                    memset(buffer, 0, sizeof(buffer));
-                    recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                    std::string resetRes(buffer);
+                    std::string resetRes;
+                    RecvPacket(clientSocket, resetRes);
                     std::vector<std::string> resetParts = SplitString(resetRes, "|");
 
                     if (resetParts.size() >= 2 && resetParts[0] == "RESET_OK") {
@@ -376,7 +405,7 @@ public:
             }
 
             if (!userInput.empty()) {
-                send(clientSocket, userInput.c_str(), userInput.length(), 0);
+                SendPacket(clientSocket, userInput);
                 std::cout << currentPrompt;
             }
         }
