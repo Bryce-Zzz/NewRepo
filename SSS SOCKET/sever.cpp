@@ -381,6 +381,39 @@ private:
                     actualName = nameMap[currentUserId];
                 }
 
+                // ================== 【新增：文件路由无脑透传】 ==================
+                if (receivedStr.find("FILE_REQ|") == 0 ||
+                    receivedStr.find("FILE_CHUNK|") == 0 ||
+                    receivedStr.find("FILE_EOF|") == 0 ||
+                    receivedStr.find("FILE_ABORT|") == 0) {  // 【新增】：允许透传刹车指令
+
+                    std::vector<std::string> fileParts = SplitString(receivedStr, "|");
+                    if (fileParts.size() >= 2) {
+                        int targetId = -1;
+                        try { targetId = std::stoi(fileParts[1]); }
+                        catch (...) {}
+
+                        std::lock_guard<std::mutex> lock(mapMutex);
+                        if (clientMap.count(targetId)) {
+                            // 目标活着，原封不动透传！
+                            // 核心：不管里面是多大的 Base64，直接原封不动透传给接收方！
+                            SendPacket(clientMap[targetId], receivedStr);
+                        }
+                        else {
+                            // 【新增：目标死了，退信机制】
+                            if (fileParts[0] == "FILE_REQ") {
+                                SendPacket(clientSocket, "[系统提示]: 发送失败，目标用户不在线或不存在！");
+                            }
+                            else if (fileParts[0] == "FILE_CHUNK") {
+                                // 传到一半人没了！赶快发急电通知发送方拉手刹！
+                                SendPacket(clientSocket, "FILE_OFFLINE|");
+                            }
+                        }
+                    }
+                    continue; // 拦截完毕，跳过后面的普通聊天处理
+                }
+                // ================================================================
+
                 if (receivedStr.find("/nick ") == 0) {
                     std::string newName = receivedStr.substr(6);
                     std::lock_guard<std::mutex> lock(mapMutex);
