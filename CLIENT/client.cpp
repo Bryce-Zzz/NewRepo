@@ -239,11 +239,17 @@ private:
                         std::string fSize = parts[4];
 
                         std::lock_guard<std::mutex> lock(taskMutex);
-                        receivingTasks[senderId] = "recv_" + fName; // 记入哈希表
+
+                        // 【终极防线：物理隔离防碰撞】
+                        // 将发送者的 ID 烙印在文件名上，比如 "recv_10001_cat.jpg"
+                        // 这样就算 10 个人同时给你发 "cat.jpg"，在你的硬盘上也是 10 个绝对不重名的独立文件！
+                        std::string safeFileName = "recv_" + senderId + "_" + fName;
+                        receivingTasks[senderId] = safeFileName;
 
                         std::cout << "\n[文件传输] 叮！收到来自 [" << senderId << "] 的文件传输请求: " << fName << " (大小: " << fSize << " 字节)\n" << currentPrompt;
 
-                        std::ofstream ofs(receivingTasks[senderId], std::ios::binary | std::ios::trunc);
+                        // 使用带有 ID 前缀的安全文件名创建本地文件
+                        std::ofstream ofs(safeFileName, std::ios::binary | std::ios::trunc);
                         ofs.close();
                     }
                     continue;
