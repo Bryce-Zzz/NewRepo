@@ -385,7 +385,9 @@ private:
                 if (receivedStr.find("FILE_REQ|") == 0 ||
                     receivedStr.find("FILE_CHUNK|") == 0 ||
                     receivedStr.find("FILE_EOF|") == 0 ||
-                    receivedStr.find("FILE_ABORT|") == 0) {  // 【新增】：允许透传刹车指令
+                    receivedStr.find("FILE_ABORT|") == 0||
+                    receivedStr.find("FILE_ACCEPT|") == 0||
+                    receivedStr.find("FILE_REJECT|") == 0) {  // 【新增】：允许透传刹车指令
 
                     std::vector<std::string> fileParts = SplitString(receivedStr, "|");
                     if (fileParts.size() >= 2) {
