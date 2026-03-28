@@ -16,8 +16,12 @@
 #include <cstdio>  // 用于 std::remove 删除文件
 #include <map>       // 【新增】：用于多并发接收的哈希表
 
-
+// ================== 【终极进化：Windows UUID 运行环境】 ==================
+#include <rpc.h>         // 引入 Windows 原生 RPC API
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Rpcrt4.lib") // 【核心链接】：链接 RPC 运行时库，用于生成 UUID
+// =========================================================================
+
 
 // ================== 【终极优雅：单例指针挂载】 ==================
 class ChatClient; // 提前声明类
@@ -44,14 +48,39 @@ private:
     std::map<std::string, std::string> receivingTasks; // Key: 发送方ID, Value: 本地文件名
     std::mutex taskMutex; // 保护哈希表的多线程锁
 
-    // 记录我当前正在发送的目标和文件名（为了临终发刹车包用）
-    std::string currentSendTarget = "";
-    std::string currentSendFileName = "";
-    // ================================================================
+    // ================== 【终极进化：并发发送引擎状态】 ==================
+      // 为什么用 shared_ptr？因为 std::atomic 是不可复制的，直接放进 map 会报错！
+    struct SendTask {
+        std::string targetId;
+        std::string fileName;
+        std::string globalUuid; // 【新增】：隐藏在背后的长 UUID，专供网络传输
+        std::shared_ptr<std::atomic<bool>> isCancelling;
 
-    // ================== 【新增：刹车系统状态标志】 ==================
-    std::atomic<bool> isTransferring{ false };       // 记录当前是否正在发文件
-    std::atomic<bool> isTransferCancelling{ false }; // 记录是否按下了撤销键
+        SendTask() : isCancelling(std::make_shared<std::atomic<bool>>(false)) {}
+    };
+
+    std::map<int, SendTask> sendingTasks; // 记录自己发出去的所有任务 (Key: 本地任务ID)
+    std::mutex sendTaskMutex;                     // 保护发送字典的锁
+    std::atomic<int> localTaskIdCounter{ 1 };     // 恢复本地短号发号器
+    
+    // ================== 【新增：Windows 原生 UUID 生成器】 ==================
+    // 生成格式如: "550e8400-e29b-41d4-a716-446655440000" 的全球唯一字符串
+    std::string GenerateStringUUID() {
+        UUID uuid;
+        // 1. 调用 Windows API 创建 UUID
+        if (UuidCreate(&uuid) != RPC_S_OK) return "uuid_error"; // 极其罕见的错误
+
+        unsigned char* uuidStrRaw = nullptr;
+        // 2. 将二进制 UUID 转换为字符串
+        if (UuidToStringA(&uuid, &uuidStrRaw) != RPC_S_OK) return "uuid_string_error";
+
+        std::string finalUuid(reinterpret_cast<char*>(uuidStrRaw));
+
+        // 3. 必须！调用 Windows API 释放分配的字符串内存，防止内存泄漏！
+        RpcStringFreeA(&uuidStrRaw);
+        return finalUuid;
+    }
+    // =========================================================================
 
     // ================== 【新增：核心网络收发引擎】 ==================
     bool SendPacket(SOCKET sock, const std::string& msg) {
@@ -227,28 +256,29 @@ private:
     void ReceiveMessages() {
         while (isConnected) {
             std::string msg;
-            int r = RecvPacket(clientSocket, msg); // 【核心】：用包引擎替换原生 recv
+            int r = RecvPacket(clientSocket, msg); // 用包引擎替换原生 recv
 
             if (r == 1) {
-                // ================== 【全新并发哈希接收引擎】 ==================
+                // ================== 【终极进化：基于联合 Key 的并发哈希接收引擎】 ==================
                 if (msg.find("FILE_REQ|") == 0) {
                     auto parts = SplitString(msg, "|");
-                    if (parts.size() >= 5) {
+                    if (parts.size() >= 6) {
                         std::string senderId = parts[2];
-                        std::string fName = parts[3];
-                        std::string fSize = parts[4];
+                        std::string taskId = parts[3];
+                        std::string fName = parts[4];
+                        std::string fSize = parts[5];
+
+                        // 【全球唯一 Key】
+                        std::string globalKey = senderId + "_" + taskId;
 
                         std::lock_guard<std::mutex> lock(taskMutex);
 
-                        // 【终极防线：物理隔离防碰撞】
-                        // 将发送者的 ID 烙印在文件名上，比如 "recv_10001_cat.jpg"
-                        // 这样就算 10 个人同时给你发 "cat.jpg"，在你的硬盘上也是 10 个绝对不重名的独立文件！
-                        std::string safeFileName = "recv_" + senderId + "_" + fName;
-                        receivingTasks[senderId] = safeFileName;
+                        // 物理文件命名也带上这个神圣的防爆盾
+                        std::string safeFileName = "recv_" + globalKey + "_" + fName;
+                        receivingTasks[globalKey] = safeFileName;
 
-                        std::cout << "\n[文件传输] 叮！收到来自 [" << senderId << "] 的文件传输请求: " << fName << " (大小: " << fSize << " 字节)\n" << currentPrompt;
+                        std::cout << "\n[文件传输] 叮！收到来自 [" << senderId << "] 的新任务 #" << taskId << ": " << fName << "\n" << currentPrompt;
 
-                        // 使用带有 ID 前缀的安全文件名创建本地文件
                         std::ofstream ofs(safeFileName, std::ios::binary | std::ios::trunc);
                         ofs.close();
                     }
@@ -256,14 +286,13 @@ private:
                 }
                 else if (msg.find("FILE_CHUNK|") == 0) {
                     auto parts = SplitString(msg, "|");
-                    if (parts.size() >= 5) {
-                        std::string senderId = parts[2];
+                    if (parts.size() >= 6) {
+                        std::string globalKey = parts[2] + "_" + parts[3];
                         std::lock_guard<std::mutex> lock(taskMutex);
 
-                        // 从哈希表里精准找到属于这个发送者的文件进行写入！
-                        if (receivingTasks.count(senderId)) {
-                            std::string decodedData = Base64Decode(parts[4]); // Base64变成了第4号索引
-                            std::ofstream ofs(receivingTasks[senderId], std::ios::binary | std::ios::app);
+                        if (receivingTasks.count(globalKey)) {
+                            std::string decodedData = Base64Decode(parts[5]);
+                            std::ofstream ofs(receivingTasks[globalKey], std::ios::binary | std::ios::app);
                             if (ofs.is_open()) {
                                 ofs.write(decodedData.data(), decodedData.size());
                                 ofs.close();
@@ -274,20 +303,20 @@ private:
                 }
                 else if (msg.find("FILE_EOF|") == 0) {
                     auto parts = SplitString(msg, "|");
-                    if (parts.size() >= 4) {
-                        std::string senderId = parts[2];
+                    if (parts.size() >= 5) {
+                        std::string globalKey = parts[2] + "_" + parts[3];
                         std::string localFile;
 
                         {
                             std::lock_guard<std::mutex> lock(taskMutex);
-                            if (receivingTasks.count(senderId)) {
-                                localFile = receivingTasks[senderId];
-                                receivingTasks.erase(senderId); // 【完美闭环】：收完就从哈希表里抹除！
+                            if (receivingTasks.count(globalKey)) {
+                                localFile = receivingTasks[globalKey];
+                                receivingTasks.erase(globalKey);
                             }
                         }
 
                         if (!localFile.empty()) {
-                            std::cout << "\n[文件传输] 来自 [" << senderId << "] 的文件接收完毕！已保存为: " << localFile << "，正在为您自动打开...\n" << currentPrompt;
+                            std::cout << "\n[文件传输] 任务完成！文件已保存为: " << localFile << "\n" << currentPrompt;
                             system(("start " + localFile).c_str());
                         }
                     }
@@ -295,30 +324,70 @@ private:
                 }
                 else if (msg.find("FILE_ABORT|") == 0) {
                     auto parts = SplitString(msg, "|");
-                    if (parts.size() >= 4) {
-                        std::string senderId = parts[2];
+                    if (parts.size() >= 5) {
+                        std::string senderId = parts[2]; // 发送方
+                        std::string fName = parts[4];    // 文件名
+                        std::string globalKey = parts[2] + "_" + parts[3];
 
                         std::lock_guard<std::mutex> lock(taskMutex);
-                        if (receivingTasks.count(senderId)) {
-                            std::cout << "\n[系统警告] 用户 [" << senderId << "] 紧急撤回了文件传输！正在销毁残留数据...\n" << currentPrompt;
-                            std::remove(receivingTasks[senderId].c_str());
-                            receivingTasks.erase(senderId); // 物理抹杀并从哈希表清理
-                            std::cout << "[系统清理] 残缺文件已被彻底物理删除。\n" << currentPrompt;
+                        if (receivingTasks.count(globalKey)) {
+                            // 【体验升级】：精准播报是谁撤回了什么文件！
+                            std::cout << "\n[系统警告] 用户 [" << senderId << "] 紧急撤回了文件 [" << fName << "]！正在销毁残留数据...\n" << currentPrompt;
+                            std::remove(receivingTasks[globalKey].c_str());
+                            receivingTasks.erase(globalKey);
                         }
                     }
                     continue;
                 }
                 else if (msg.find("FILE_OFFLINE|") == 0) {
-                    if (isTransferring && !isTransferCancelling) {
-                        std::cout << "\n[系统警告] 接收方意外掉线，文件传输已自动终止！\n" << currentPrompt;
-                        isTransferCancelling = true;
+                    auto parts = SplitString(msg, "|");
+                    if (parts.size() >= 2) {
+                        std::string failedUuid = parts[1]; // 服务端退回的 UUID 快递单号
+
+                        std::lock_guard<std::mutex> lock(sendTaskMutex);
+                        // 遍历短号字典，揪出那个底层 UUID 匹配的任务
+                        for (auto& pair : sendingTasks) {
+                            if (pair.second.globalUuid == failedUuid) {
+                                // 如果还没被刹车，系统代劳，自动拉手刹！
+                                if (!*(pair.second.isCancelling)) {
+                                    *(pair.second.isCancelling) = true;
+                                    std::cout << "\n[系统警告] 任务 #" << pair.first << " 的目标意外离线，该传输已被系统自动终止！\n" << currentPrompt;
+                                }
+                                break;
+                            }
+                        }
                     }
                     continue;
                 }
-                // ================================================================
+                // ================== 【新增：基于死亡宣告的终极防御】 ==================
+                // 【安全修复】：使用 find 替代 substr 防止短消息越界崩溃！
+                else if (msg.find("OFFLINE:") == 0) {
+                    std::string offlineUserId = msg.substr(8);
 
+                    // 1. 打印聊天室下线提示
+                    std::cout << "\n[系统提示] 用户 [" << offlineUserId << "] 离线了。\n" << currentPrompt;
 
-                if (msg.substr(0, 9) == "NICK_ACK:") {
+                    // 2. 扫地僧出动：清理该死者留下的所有残缺文件！
+                    std::lock_guard<std::mutex> lock(taskMutex);
+                    for (auto it = receivingTasks.begin(); it != receivingTasks.end(); ) {
+                        std::string key = it->first;
+                        std::string prefix = offlineUserId + "_";
+
+                        if (key.find(prefix) == 0) {
+                            std::cout << "[系统清理] 检测到发送方 [" << offlineUserId << "] 异常断线！已自动销毁其残缺文件: " << it->second << "\n" << currentPrompt;
+                            std::remove(it->second.c_str());
+                            it = receivingTasks.erase(it);
+                        }
+                        else {
+                            ++it;
+                        }
+                    }
+                    continue;
+                }
+                // =========================================================================
+
+                // 【安全修复】：普通消息判定，使用 find 替代 substr 
+                if (msg.find("NICK_ACK:") == 0) {
                     std::string newName = msg.substr(9);
                     currentPrompt = "[" + newName + "] > ";
                     std::cout << "\n[系统提示]: 你的本地提示符已同步更新。\n" << currentPrompt;
@@ -329,18 +398,22 @@ private:
             }
             else {
                 if (isConnected) {
-                    std::cout << "\n[!] 与服务端的连接已异常断开。" << std::endl;
+                    // 【关键修复 3】：视觉轰炸！用极其醒目的边框打破 getline 带来的视觉盲区
+                    std::cout << "\n\n==================================================" << std::endl;
+                    std::cout << " [致命错误] 与服务端的连接已物理断开！服务器已宕机！" << std::endl;
+                    std::cout << "==================================================\n" << std::endl;
 
-                    // 【终极重构版：断网自毁引擎】
-                    // 直接调用类内部的急救函数，它会自动遍历哈希表，把所有没收完的文件删得干干净净！
                     EmergencyCleanup();
 
-                    std::cout << "[系统清理] 检测到断网，已自动删除所有接收到一半的残缺文件，防止硬盘积攒垃圾。\n";
+                    std::cout << "[系统清理] 检测到断网，已自动销毁所有残缺文件。\n";
+
+                    // 告诉被 getline 卡住的用户该怎么做
+                    std::cout << "\n请按回车键 (Enter) 退出程序...\n";
 
                     isConnected = false;
                 }
-                break;
-            }
+                break; // 退出接收循环
+        }
         }
     }
 
@@ -354,9 +427,8 @@ public:
         WSACleanup();
     }
 
-    // ================== 【新增：类内部的急救清理中心】 ==================
     void EmergencyCleanup() {
-        // 1. 作为接收方：遍历哈希表，把所有没收完的残缺文件全部物理抹杀！
+        // 1. 接收方清理残缺文件
         {
             std::lock_guard<std::mutex> lock(taskMutex);
             for (const auto& pair : receivingTasks) {
@@ -364,14 +436,20 @@ public:
             }
         }
 
-        // 2. 作为发送方：临死前射出最后一发刹车包！
-        // 注意新协议：FILE_ABORT | 目标ID | 我的ID | 文件名
-        if (isTransferring && clientSocket != INVALID_SOCKET) {
-            std::string abortMsg = "FILE_ABORT|" + currentSendTarget + "|" + myId + "|" + currentSendFileName;
-            SendPacket(clientSocket, abortMsg);
+        // 2. 发送方清理所有正在发送的任务
+        {
+            std::lock_guard<std::mutex> lock(sendTaskMutex);
+            for (const auto& pair : sendingTasks) {
+                // 【关键修复 1】：拉断手刹！让还在干活的后台线程立刻知道自己被处决了！
+                *(pair.second.isCancelling) = true;
+
+                if (clientSocket != INVALID_SOCKET) {
+                    std::string abortMsg = "FILE_ABORT|" + pair.second.targetId + "|" + myId + "|" + pair.second.globalUuid + "|" + pair.second.fileName;
+                    SendPacket(clientSocket, abortMsg);
+                }
+            }
         }
     }
-    // ================================================================
 
     bool Initialize() {
         WSADATA wsaData;
@@ -602,7 +680,8 @@ public:
         std::cout << "【群聊】直接打字并回车" << std::endl;
         std::cout << "【私聊】格式: @目标ID或昵称 消息内容" << std::endl;
         std::cout << "【改名】格式: /nick 新名字" << std::endl;
-        std::cout << "【传输】格式: /sendfile 目标ID 文件完整路径 /cancel 取消发送" << std::endl;
+        std::cout << "【传输】格式: /sendfile 目标ID 文件完整路径 取消 /cancel [任务号]" << std::endl;
+        std::cout << "【任务】格式: /tasks" << std::endl;
         std::cout << "【退出】格式: quit" << std::endl;
         std::cout << "========================================" << std::endl;
 
@@ -615,42 +694,67 @@ public:
             std::getline(std::cin, userInput);
 
             if (userInput == "quit") {
-                isConnected = false; // 【核心修改】：先告诉后台线程“我要正常退出了”
+                std::cout << "\n[系统提示] 正在执行安全退出清理程序，请稍候...\n";
+                isConnected = false; // 先告诉后台接收线程准备收工
+
+                // 【步骤 1】：主动呼叫急救中心！拉断所有发送线程的手刹，并向外发射 FILE_ABORT 刹车包
+                EmergencyCleanup();
+
+                // 【步骤 2】：让子弹飞一会儿！
+                // 必须停顿 200 毫秒，确保网卡把刚才生成的 FILE_ABORT 包结结实实地推到了网线上
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+                // 【步骤 3】：遗言发送完毕，安全关闭发送通道
                 shutdown(clientSocket, SD_SEND);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+                std::cout << "[系统提示] 清理完毕，安全断开连接。再见！\n";
                 break;
             }
 
-            // ================== 【新增：主动刹车指令】 ==================
-            if (userInput == "/cancel") {
-                if (isTransferring) {
-                    isTransferCancelling = true; // 拉下原子手刹！
-                    std::cout << "[系统提示] 已发送物理刹车信号，正在强制终止传输...\n" << currentPrompt;
+            if (userInput == "/tasks") {
+                std::lock_guard<std::mutex> lock(sendTaskMutex);
+                std::cout << "\n--- 当前发送任务列表 ---\n";
+                if (sendingTasks.empty()) std::cout << "当前没有正在发送的文件。\n";
+                for (const auto& pair : sendingTasks) {
+                    // 给用户展示的永远是短号
+                    std::cout << "任务#" << pair.first << " -> 目标: " << pair.second.targetId << " 文件: " << pair.second.fileName << "\n";
+                }
+                std::cout << "------------------------\n" << currentPrompt;
+                continue;
+            }
+
+            if (userInput.find("/cancel ") == 0) {
+                int taskIdToCancel = 0;
+                try {
+                    taskIdToCancel = std::stoi(userInput.substr(8)); // 解析短号，比如 1
+                }
+                catch (...) {
+                    std::cout << "[错误] 请输入正确的任务编号，例如 /cancel 1\n" << currentPrompt;
+                    continue;
+                }
+
+                std::lock_guard<std::mutex> lock(sendTaskMutex);
+                if (sendingTasks.count(taskIdToCancel)) {
+                    *(sendingTasks[taskIdToCancel].isCancelling) = true;
+                    std::cout << "[系统提示] 已向任务#" << taskIdToCancel << " 发送终止指令...\n" << currentPrompt;
                 }
                 else {
-                    std::cout << "[系统提示] 当前没有正在传输的文件！\n" << currentPrompt;
+                    std::cout << "[系统提示] 找不到任务#" << taskIdToCancel << "！\n" << currentPrompt;
                 }
                 continue;
             }
 
-            // ================== 【新增：后台文件分块发送引擎】 ==================
+            // ================== 【终极引擎：基于 UUID 的内外双 ID 并发发送】 ==================
             if (userInput.find("/sendfile ") == 0) {
-                // 【新增防并发】：如果已经在传了，禁止同时传第二个
-                if (isTransferring) {
-                    std::cout << "[系统拒绝] 当前已有文件正在传输，请等待完成或输入 /cancel 取消！\n" << currentPrompt;
-                    continue;
-                }
 
-                size_t firstSpace = userInput.find(' ');
-                size_t secondSpace = userInput.find(' ', firstSpace + 1);
-
-                if (secondSpace == std::string::npos) {
+                auto parts = SplitString(userInput, " ");
+                if (parts.size() < 3) {
                     std::cout << "[错误] 格式不正确！请使用: /sendfile 目标ID 文件完整路径\n" << currentPrompt;
                     continue;
                 }
 
-                std::string targetIdStr = userInput.substr(firstSpace + 1, secondSpace - firstSpace - 1);
-                std::string filePath = userInput.substr(secondSpace + 1);
+                std::string targetIdStr = parts[1];
+                std::string filePath = parts[2]; // 注意：要求路径里无空格，简化处理
 
                 std::ifstream checkFile(filePath, std::ios::binary | std::ios::ate);
                 if (!checkFile.is_open()) {
@@ -664,20 +768,31 @@ public:
                 size_t slashPos = fileName.find_last_of("/\\");
                 if (slashPos != std::string::npos) fileName = fileName.substr(slashPos + 1);
 
-                currentSendTarget = targetIdStr;   // 记入成员变量，临终遗愿用
-                currentSendFileName = fileName;
+                // 1. 生成内外双 ID
+                int localId = localTaskIdCounter++; // 给用户看的短号 1, 2, 3
+                std::string globalUuid = GenerateStringUUID(); // 给网络用的长 UUID "550e8400..."
 
-                std::cout << "[系统提示] 文件 [" << fileName << "] 已加入后台传输队列，您可以继续聊天！\n" << currentPrompt;
+                // 2. 将任务精准登记到本地字典 (Key 必须用本地短号 int)
+                std::shared_ptr<std::atomic<bool>> cancelFlag;
+                {
+                    std::lock_guard<std::mutex> lock(sendTaskMutex);
+                    SendTask newTask;
+                    newTask.targetId = targetIdStr;
+                    newTask.fileName = fileName;
+                    newTask.globalUuid = globalUuid; // 隐藏 UUID 到结构体
+                    sendingTasks[localId] = newTask;
+                    cancelFlag = newTask.isCancelling; // 提取专属刹车线
+                }
 
-                isTransferring = true;
-                isTransferCancelling = false;
+                std::cout << "[系统提示] 任务#" << localId << " 创建成功！正在给 [" << targetIdStr << "] 后台发送 [" << fileName << "]...\n" << currentPrompt;
 
-                std::thread([this, targetIdStr, filePath, fileName, fileSize]() {
+                // 3. 开启搬砖子线程，注意传入 localId, globalUuid 
+                std::thread([this, targetIdStr, localId, globalUuid, filePath, fileName, fileSize, cancelFlag]() {
                     std::ifstream file(filePath, std::ios::binary);
-                    if (!file.is_open()) { isTransferring = false; return; }
+                    if (!file.is_open()) return;
 
-                    // 【核心改动 1】：协议升级，塞入 myId !
-                    std::string reqMsg = "FILE_REQ|" + targetIdStr + "|" + myId + "|" + fileName + "|" + std::to_string(fileSize);
+                    // 【核心改动】：协议升级，塞入 myId 和全球唯一 globalUuid !
+                    std::string reqMsg = "FILE_REQ|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName + "|" + std::to_string(fileSize);
                     SendPacket(clientSocket, reqMsg);
 
                     const int CHUNK_SIZE = 45000;
@@ -686,49 +801,65 @@ public:
                     std::streamsize totalRead = 0;
                     int lastReportedProgress = 0;
 
+                    // --- 【核心循环块，无任何省略】 ---
                     while (totalRead < fileSize) {
-                        if (isTransferCancelling) {
-                            // 【核心改动 2】：协议升级，塞入 myId !
-                            std::string abortMsg = "FILE_ABORT|" + targetIdStr + "|" + myId + "|" + fileName;
+                        // 【精准刹车】：只看属于自己的那根刹车线
+                        if (*cancelFlag) {
+                            std::string abortMsg = "FILE_ABORT|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName;
                             SendPacket(clientSocket, abortMsg);
-                            std::cout << "\n[系统提示] 文件 [" << fileName << "] 的传输已被您物理斩断！\n" << currentPrompt;
-                            break;
+                            std::cout << "\n[系统提示] 任务#" << localId << " (" << fileName << ") 的传输已被物理斩断！\n" << currentPrompt;
+                            break; // 直接砸碎循环，停止传输
                         }
 
+                        // 每次读取硬盘前清空 buffer 
+                        std::fill(buffer.begin(), buffer.end(), 0);
                         file.read(reinterpret_cast<char*>(buffer.data()), CHUNK_SIZE);
                         std::streamsize bytesRead = file.gcount();
                         totalRead += bytesRead;
 
+                        // ================== 【终极修复：毫无省略的 Base64 引擎】 ==================
+                        // 【你说的错误就在这里】！绝对不能省略这一行代码！
+                        // 必须！把暴力的二进制数据逆向转码为安全的英文字母 Base64，否则无法通过 TCP 发送！
                         std::string encodedData = Base64Encode(buffer.data(), bytesRead);
-                        // 【核心改动 3】：协议升级，塞入 myId !
-                        std::string chunkMsg = "FILE_CHUNK|" + targetIdStr + "|" + myId + "|" + std::to_string(chunkIndex) + "|" + encodedData;
+                        // =========================================================================
 
-                        SendPacket(clientSocket, chunkMsg);
+                        // 【协议升级】：加塞 globalUuid 
+                        // 现在，这一行代码里的 encodedData 就是百分之百定义的了！编译器完美通过！
+                        std::string chunkMsg = "FILE_CHUNK|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + std::to_string(chunkIndex) + "|" + encodedData;
+
+                        if (!SendPacket(clientSocket, chunkMsg)) {
+                            std::cout << "\n[任务#" << localId << "] 网络异常，发送失败！\n" << currentPrompt;
+                            break;
+                        }
+
                         chunkIndex++;
 
+                        // 【打印进度】：给用户看简短的 localId
                         int progress = (totalRead * 100) / fileSize;
                         if (progress - lastReportedProgress >= 20 || progress == 100) {
-                            std::cout << "\n[后台任务] 发送进度: " << progress << "%\n" << currentPrompt;
+                            std::cout << "\n[任务#" << localId << "] 发送进度: " << progress << "%\n" << currentPrompt;
                             lastReportedProgress = progress;
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     }
                     file.close();
 
-                    if (!isTransferCancelling) {
-                        // 【核心改动 4】：协议升级，塞入 myId !
-                        std::string eofMsg = "FILE_EOF|" + targetIdStr + "|" + myId + "|" + fileName;
+                    // 【关键修复 2】：双重校验！不仅要没被取消，而且真正读取的字节数必须等于文件总大小！
+                    if (!(*cancelFlag) && totalRead >= fileSize) {
+                        std::string eofMsg = "FILE_EOF|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName;
                         SendPacket(clientSocket, eofMsg);
-                        std::cout << "\n[后台任务] 文件 [" << fileName << "] 传输大功告成！\n" << currentPrompt;
+                        std::cout << "\n[任务 #" << localId << "] 文件传输大功告成！\n" << currentPrompt;
                     }
 
-                    isTransferring = false;
-                    }).detach();
+                    // 任务结束，打扫战场
+                    {
+                        std::lock_guard<std::mutex> lock(sendTaskMutex);
+                        sendingTasks.erase(localId);
+                    }
+                }).detach();
 
                 continue;
             }
-            // ================================================================
-
             if (!userInput.empty()) {
                 SendPacket(clientSocket, userInput);
                 std::cout << currentPrompt;

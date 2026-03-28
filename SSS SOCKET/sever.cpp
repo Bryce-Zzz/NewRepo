@@ -405,8 +405,8 @@ private:
                                 SendPacket(clientSocket, "[系统提示]: 发送失败，目标用户不在线或不存在！");
                             }
                             else if (fileParts[0] == "FILE_CHUNK") {
-                                // 传到一半人没了！赶快发急电通知发送方拉手刹！
-                                SendPacket(clientSocket, "FILE_OFFLINE|");
+                                // 【新增】：把出事的 taskId (也就是 fileParts[3]) 附在退信里发回去！
+                                SendPacket(clientSocket, "FILE_OFFLINE|" + fileParts[3]);
                             }
                         }
                     }
