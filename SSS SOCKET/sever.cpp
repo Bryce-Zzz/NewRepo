@@ -193,7 +193,7 @@ private:
             if (id >= nextUserId) nextUserId = id + 1;
         }
         ifs.close();
-        PrintLog("[系统启动] 成功加载历史注册用户数量: " + std::to_string(registeredUsers.size()));
+        PrintLog("[Aurora系统启动] 成功加载历史注册用户数量: " + std::to_string(registeredUsers.size()));
     }
 
     void SaveNewUser(int id, const std::string& pwd, const std::string& name) {
@@ -711,7 +711,7 @@ public:
         return true;
     }
     void Run() {
-        std::cout << "=== 聊天服务器 (加入2字节定长包头 防粘包引擎) 已启动 ===" << std::endl;
+        std::cout << "=== 聊天服务器已启动 ===" << std::endl;
         std::cout << "可用指令：\n  /yes <ID> (审批通过并生成验证码)\n  /showusers (查看所有已注册用户)\n  /clearall (删库并踢出所有人)\n  /del <ID> (封号删档)\n  @ID或昵称 (服务端单独私聊)\n" << std::endl;
         std::cout << serverPrompt;
 

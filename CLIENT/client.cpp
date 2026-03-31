@@ -434,13 +434,16 @@ public:
             for (const auto& pair : receivingTasks) {
                 std::remove(pair.second.c_str());
             }
+            // 【关键修复】：斩草除根！必须清空字典。
+            // 这样后台线程即使读到残留的 CHUNK 包，也会因为在字典里找不到 Key 而直接丢弃，绝不会重建文件！
+            receivingTasks.clear();
         }
 
         // 2. 发送方清理所有正在发送的任务
         {
             std::lock_guard<std::mutex> lock(sendTaskMutex);
             for (const auto& pair : sendingTasks) {
-                // 【关键修复 1】：拉断手刹！让还在干活的后台线程立刻知道自己被处决了！
+                // 拉断手刹！让还在干活的后台线程立刻知道自己被处决了！
                 *(pair.second.isCancelling) = true;
 
                 if (clientSocket != INVALID_SOCKET) {
@@ -448,6 +451,8 @@ public:
                     SendPacket(clientSocket, abortMsg);
                 }
             }
+            // 发送方也顺手清空字典，保持内存绝对干净
+            sendingTasks.clear();
         }
     }
 
@@ -476,7 +481,7 @@ public:
             system("cls");
 
             std::cout << "================================\n";
-            std::cout << "     欢迎来到极简聊天室系统     \n";
+            std::cout << "     欢迎来到Aurora聊天室系统     \n";
             std::cout << "================================\n";
             std::cout << "1. 登录账号\n";
             std::cout << "2. 注册账号\n";
