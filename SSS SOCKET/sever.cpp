@@ -1,4 +1,29 @@
-﻿#define NOMINMAX
+﻿// =========================================================================
+// 【跨平台兼容层】：让代码同时在 Windows 和 Linux (Debian) 下完美编译
+// =========================================================================
+#ifdef _WIN32
+    // Windows 环境下的依赖
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef int socklen_t; // Windows 下 accept 第三个参数用 int
+#define GET_SOCKET_ERROR() WSAGetLastError()
+#else
+    // Linux/Debian 环境下的依赖
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <cerrno>      // 用于获取 Linux 错误码 (errno)
+#define SOCKET int
+#define INVALID_SOCKET -1
+#define SOCKET_ERROR -1
+#define closesocket(s) close(s) // 将 Windows 的 closesocket 映射为 Linux 的 close
+#define GET_SOCKET_ERROR() errno
+#endif
+// =========================================================================
+
 #include <iostream>
 #include <string>
 #include <thread>
@@ -11,12 +36,8 @@
 #include <random>     
 #include <set>        
 #include <list>       
-#include <cstdint>    // 新增：用于 uint16_t
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <cstdint>    // 用于 uint16_t
 #include <sw/redis++/redis++.h>
-
-#pragma comment(lib, "ws2_32.lib")
 
 class ChatServer {
 private:
@@ -45,15 +66,13 @@ private:
     std::set<int> activeResetIds;
     std::map<SOCKET, int> resettingIdsMap;
 
-    // ================== 【新增：核心网络收发引擎】 ==================
-    // 1. 发送定长包头数据
+    // ================== 【核心网络收发引擎】 ==================
     bool SendPacket(SOCKET sock, const std::string& msg) {
         if (msg.empty()) return true;
-        // htons: Host TO Network Short (转为网络统一的字节序)
         uint16_t net_len = htons(static_cast<uint16_t>(msg.length()));
         std::string packet;
-        packet.append(reinterpret_cast<char*>(&net_len), 2); // 塞入 2 字节包头
-        packet.append(msg);                                  // 塞入真实数据
+        packet.append(reinterpret_cast<char*>(&net_len), 2);
+        packet.append(msg);
 
         int totalSent = 0;
         int packetLen = packet.length();
@@ -65,33 +84,28 @@ private:
         return true;
     }
 
-    // 2. 严谨接收指定长度数据 (返回值: 1成功, 0正常断开, -1异常)
     int RecvExactly(SOCKET sock, char* buf, int len) {
         int totalRecv = 0;
         while (totalRecv < len) {
             int r = recv(sock, buf + totalRecv, len - totalRecv, 0);
-            if (r == 0) return 0;  // 客户端优雅退出
-            if (r < 0) return -1;  // 异常断开
+            if (r == 0) return 0;
+            if (r < 0) return -1;
             totalRecv += r;
         }
         return 1;
     }
 
-    // 3. 完整解包机制
     int RecvPacket(SOCKET sock, std::string& msg) {
         uint16_t net_len = 0;
-        // 第一步：先读 2 字节包头
         int r = RecvExactly(sock, reinterpret_cast<char*>(&net_len), 2);
         if (r <= 0) return r;
 
-        // ntohs: Network TO Host Short (解析出真实长度)
         uint16_t host_len = ntohs(net_len);
         if (host_len == 0) {
             msg = "";
             return 1;
         }
 
-        // 第二步：根据真实长度，精准读取消息体
         std::vector<char> buffer(host_len);
         r = RecvExactly(sock, buffer.data(), host_len);
         if (r <= 0) return r;
@@ -123,7 +137,7 @@ private:
                 }
 
                 std::string reply = "WAIT_OK|已为您分配到重置名额！";
-                SendPacket(pending.second, reply); // 【替换】
+                SendPacket(pending.second, reply);
                 PrintLog("[权限审批] 客户端排队完成，请求重置账号 " + std::to_string(pending.first) + " 的密码。同意请在控制台输入: /yes " + std::to_string(pending.first));
             }
         }
@@ -160,7 +174,13 @@ private:
         auto now = std::chrono::system_clock::now();
         std::time_t t = std::chrono::system_clock::to_time_t(now);
         struct tm tm_info;
+
+        // 【跨平台修复】：Windows 和 Linux 获取本地时间的安全函数参数顺序是相反的
+#ifdef _WIN32
         localtime_s(&tm_info, &t);
+#else
+        localtime_r(&t, &tm_info);
+#endif
 
         std::lock_guard<std::mutex> lock(consoleMutex);
         std::cout << logMsg << "\n" << serverPrompt;
@@ -221,10 +241,9 @@ private:
         int currentUserId = -1;
         std::string currentName = "";
 
-        // ================= 阶段一：鉴权逻辑 (完美重构版) =================
         while (!isAuthenticated) {
             std::string msg;
-            int r = RecvPacket(clientSocket, msg); // 【核心】：一行代码完美收包
+            int r = RecvPacket(clientSocket, msg);
 
             if (r <= 0) {
                 ReleaseResetSlot(clientSocket);
@@ -350,7 +369,6 @@ private:
             }
         }
 
-        // ================= 阶段二：聊天大厅 (完美重构版) =================
         {
             std::lock_guard<std::mutex> lock(mapMutex);
             clientMap[currentUserId] = clientSocket;
@@ -373,7 +391,7 @@ private:
             std::string receivedStr;
             int r = RecvPacket(clientSocket, receivedStr);
 
-            if (r == 1) { // 成功收到包
+            if (r == 1) {
                 std::string actualName;
                 {
                     std::lock_guard<std::mutex> lock(mapMutex);
@@ -381,11 +399,10 @@ private:
                     actualName = nameMap[currentUserId];
                 }
 
-                // ================== 【新增：文件路由无脑透传】 ==================
                 if (receivedStr.find("FILE_REQ|") == 0 ||
                     receivedStr.find("FILE_CHUNK|") == 0 ||
                     receivedStr.find("FILE_EOF|") == 0 ||
-                    receivedStr.find("FILE_ABORT|") == 0) {  // 【新增】：允许透传刹车指令
+                    receivedStr.find("FILE_ABORT|") == 0) {
 
                     std::vector<std::string> fileParts = SplitString(receivedStr, "|");
                     if (fileParts.size() >= 2) {
@@ -395,24 +412,19 @@ private:
 
                         std::lock_guard<std::mutex> lock(mapMutex);
                         if (clientMap.count(targetId)) {
-                            // 目标活着，原封不动透传！
-                            // 核心：不管里面是多大的 Base64，直接原封不动透传给接收方！
                             SendPacket(clientMap[targetId], receivedStr);
                         }
                         else {
-                            // 【新增：目标死了，退信机制】
                             if (fileParts[0] == "FILE_REQ") {
                                 SendPacket(clientSocket, "[系统提示]: 发送失败，目标用户不在线或不存在！");
                             }
                             else if (fileParts[0] == "FILE_CHUNK") {
-                                // 【新增】：把出事的 taskId (也就是 fileParts[3]) 附在退信里发回去！
                                 SendPacket(clientSocket, "FILE_OFFLINE|" + fileParts[3]);
                             }
                         }
                     }
-                    continue; // 拦截完毕，跳过后面的普通聊天处理
+                    continue;
                 }
-                // ================================================================
 
                 if (receivedStr.find("/nick ") == 0) {
                     std::string newName = receivedStr.substr(6);
@@ -483,23 +495,41 @@ private:
                     }
                 }
             }
-            else if (r == 0) { // 正常断开
+            else if (r == 0) {
                 std::string lastName = "未知用户";
                 {
                     std::lock_guard<std::mutex> lock(mapMutex);
                     if (nameMap.count(currentUserId)) lastName = nameMap[currentUserId];
                 }
                 PrintLog("[-] 客户端 [" + lastName + "] (ID:" + std::to_string(currentUserId) + ") 正常断开连接。");
+
+                // 【下线通知追加】：为了防止幽灵文件，需要通知全服有人断开了！
+                std::string offlineMsg = "OFFLINE:" + std::to_string(currentUserId);
+                std::lock_guard<std::mutex> lock(mapMutex);
+                for (auto const& pair : clientMap) {
+                    if (pair.first != currentUserId) {
+                        SendPacket(pair.second, offlineMsg);
+                    }
+                }
                 break;
             }
-            else { // 异常断开
-                int errorCode = WSAGetLastError();
+            else {
+                int errorCode = GET_SOCKET_ERROR(); // 【跨平台修复】
                 std::string lastName = "未知用户";
                 {
                     std::lock_guard<std::mutex> lock(mapMutex);
                     if (nameMap.count(currentUserId)) lastName = nameMap[currentUserId];
                 }
                 PrintLog("[!] 异常：客户端 [" + lastName + "] (ID:" + std::to_string(currentUserId) + ") 意外断开 (错误码: " + std::to_string(errorCode) + ")。");
+
+                // 【下线通知追加】
+                std::string offlineMsg = "OFFLINE:" + std::to_string(currentUserId);
+                std::lock_guard<std::mutex> lock(mapMutex);
+                for (auto const& pair : clientMap) {
+                    if (pair.first != currentUserId) {
+                        SendPacket(pair.second, offlineMsg);
+                    }
+                }
                 break;
             }
         }
@@ -695,23 +725,31 @@ public:
     }
     ~ChatServer() {
         if (listenSocket != INVALID_SOCKET) closesocket(listenSocket);
+        // 【跨平台修复】：Linux 没有 WSA 清理函数
+#ifdef _WIN32
         WSACleanup();
+#endif
     }
     bool Initialize() {
+        // 【跨平台修复】：Linux 没有 WSA 初始化
+#ifdef _WIN32
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return false;
+#endif
         listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listenSocket == INVALID_SOCKET) return false;
+
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_port = htons(serverPort);
         serverAddr.sin_addr.s_addr = INADDR_ANY;
+
         if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) return false;
         if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) return false;
         return true;
     }
     void Run() {
-        std::cout << "=== 聊天服务器已启动 ===" << std::endl;
+        std::cout << "=== 聊天服务器已启动 (全平台兼容版) ===" << std::endl;
         std::cout << "可用指令：\n  /yes <ID> (审批通过并生成验证码)\n  /showusers (查看所有已注册用户)\n  /clearall (删库并踢出所有人)\n  /del <ID> (封号删档)\n  @ID或昵称 (服务端单独私聊)\n" << std::endl;
         std::cout << serverPrompt;
 
@@ -719,7 +757,8 @@ public:
 
         while (true) {
             sockaddr_in clientAddr;
-            int clientAddrSize = sizeof(clientAddr);
+            // 【跨平台修复】：Linux 的 accept 函数第三个参数需要是指针类型 socklen_t*
+            socklen_t clientAddrSize = sizeof(clientAddr);
             SOCKET clientSocket = accept(listenSocket, (sockaddr*)&clientAddr, &clientAddrSize);
             if (clientSocket != INVALID_SOCKET) {
                 std::thread(&ChatServer::HandleClient, this, clientSocket, clientAddr).detach();
