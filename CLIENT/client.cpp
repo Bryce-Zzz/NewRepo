@@ -8,27 +8,27 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <conio.h>
-#include <cstdint>  // ÓÃÓÚ uint16_t
-#include <fstream>   // ÓÃÓÚ¶ÁĞ´ÎÄ¼ş
-#include <cmath>     // ÓÃÓÚÊıÑ§¼ÆËã
+#include <cstdint>  // ç”¨äº uint16_t
+#include <fstream>   // ç”¨äºè¯»å†™æ–‡ä»¶
+#include <cmath>     // ç”¨äºæ•°å­¦è®¡ç®—
 #include <mutex>
-#include <atomic>  // ÓÃÓÚ¶àÏß³Ì°²È«µÄ±êÖ¾Î»
-#include <cstdio>  // ÓÃÓÚ std::remove É¾³ıÎÄ¼ş
-#include <map>       // ¡¾ĞÂÔö¡¿£ºÓÃÓÚ¶à²¢·¢½ÓÊÕµÄ¹şÏ£±í
+#include <atomic>  // ç”¨äºå¤šçº¿ç¨‹å®‰å…¨çš„æ ‡å¿—ä½
+#include <cstdio>  // ç”¨äº std::remove åˆ é™¤æ–‡ä»¶
+#include <map>       // ã€æ–°å¢ã€‘ï¼šç”¨äºå¤šå¹¶å‘æ¥æ”¶çš„å“ˆå¸Œè¡¨
 
-// ================== ¡¾ÖÕ¼«½ø»¯£ºWindows UUID ÔËĞĞ»·¾³¡¿ ==================
-#include <rpc.h>         // ÒıÈë Windows Ô­Éú RPC API
+// ================== ã€ç»ˆæè¿›åŒ–ï¼šWindows UUID è¿è¡Œç¯å¢ƒã€‘ ==================
+#include <rpc.h>         // å¼•å…¥ Windows åŸç”Ÿ RPC API
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "Rpcrt4.lib") // ¡¾ºËĞÄÁ´½Ó¡¿£ºÁ´½Ó RPC ÔËĞĞÊ±¿â£¬ÓÃÓÚÉú³É UUID
+#pragma comment(lib, "Rpcrt4.lib") // ã€æ ¸å¿ƒé“¾æ¥ã€‘ï¼šé“¾æ¥ RPC è¿è¡Œæ—¶åº“ï¼Œç”¨äºç”Ÿæˆ UUID
 // =========================================================================
 
 
-// ================== ¡¾ÖÕ¼«ÓÅÑÅ£ºµ¥ÀıÖ¸Õë¹ÒÔØ¡¿ ==================
-class ChatClient; // ÌáÇ°ÉùÃ÷Àà
+// ================== ã€ç»ˆæä¼˜é›…ï¼šå•ä¾‹æŒ‡é’ˆæŒ‚è½½ã€‘ ==================
+class ChatClient; // æå‰å£°æ˜ç±»
 
-ChatClient* g_appInstance = nullptr; // Î¨Ò»ºÏ·¨µÄÈ«¾ÖÖ¸Õë£¨Í¨Íù±£ÏÕ¹ñµÄÔ¿³×£©
+ChatClient* g_appInstance = nullptr; // å”¯ä¸€åˆæ³•çš„å…¨å±€æŒ‡é’ˆï¼ˆé€šå¾€ä¿é™©æŸœçš„é’¥åŒ™ï¼‰
 
-// ÕâÀïÖ»×ö¡°º¯ÊıÉùÃ÷¡±£¬¸æËßÏµÍ³ÓĞÕâ¸öº¯Êı£¬µ«ÉíÌå·ÅÔÚºóÃæ£¡
+// è¿™é‡Œåªåšâ€œå‡½æ•°å£°æ˜â€ï¼Œå‘Šè¯‰ç³»ç»Ÿæœ‰è¿™ä¸ªå‡½æ•°ï¼Œä½†èº«ä½“æ”¾åœ¨åé¢ï¼
 BOOL WINAPI ConsoleCtrlHandler(DWORD signal);
 // ================================================================
 
@@ -42,47 +42,58 @@ private:
     std::string myName;
     bool isConnected;
     
-    std::mutex sendMutex; // ĞÂÔö£º±£»¤·¢ËÍÍ¨µÀµÄ»¥³âËø
+    std::mutex sendMutex; // æ–°å¢ï¼šä¿æŠ¤å‘é€é€šé“çš„äº’æ–¥é”
 
-    // ================== ¡¾ĞÂÔö£º¶à²¢·¢½ÓÊÕÒıÇæºËĞÄ¡¿ ==================
-    std::map<std::string, std::string> receivingTasks; // Key: ·¢ËÍ·½ID, Value: ±¾µØÎÄ¼şÃû
-    std::mutex taskMutex; // ±£»¤¹şÏ£±íµÄ¶àÏß³ÌËø
+    // ================== ã€æ–°å¢ï¼šå¤šå¹¶å‘æ¥æ”¶å¼•æ“æ ¸å¿ƒã€‘ ==================
+    std::map<std::string, std::string> receivingTasks; // Key: å‘é€æ–¹ID, Value: æœ¬åœ°æ–‡ä»¶å
+    std::mutex taskMutex; // ä¿æŠ¤å“ˆå¸Œè¡¨çš„å¤šçº¿ç¨‹é”
 
-    // ================== ¡¾ÖÕ¼«½ø»¯£º²¢·¢·¢ËÍÒıÇæ×´Ì¬¡¿ ==================
-      // ÎªÊ²Ã´ÓÃ shared_ptr£¿ÒòÎª std::atomic ÊÇ²»¿É¸´ÖÆµÄ£¬Ö±½Ó·Å½ø map »á±¨´í£¡
+    // ================== ã€ç»ˆæè¿›åŒ–ï¼šå¹¶å‘å‘é€å¼•æ“çŠ¶æ€ã€‘ ==================
+      // ä¸ºä»€ä¹ˆç”¨ shared_ptrï¼Ÿå› ä¸º std::atomic æ˜¯ä¸å¯å¤åˆ¶çš„ï¼Œç›´æ¥æ”¾è¿› map ä¼šæŠ¥é”™ï¼
     struct SendTask {
         std::string targetId;
         std::string fileName;
-        std::string globalUuid; // ¡¾ĞÂÔö¡¿£ºÒş²ØÔÚ±³ºóµÄ³¤ UUID£¬×¨¹©ÍøÂç´«Êä
+        std::string globalUuid; // ã€æ–°å¢ã€‘ï¼šéšè—åœ¨èƒŒåçš„é•¿ UUIDï¼Œä¸“ä¾›ç½‘ç»œä¼ è¾“
         std::shared_ptr<std::atomic<bool>> isCancelling;
 
         SendTask() : isCancelling(std::make_shared<std::atomic<bool>>(false)) {}
     };
 
-    std::map<int, SendTask> sendingTasks; // ¼ÇÂ¼×Ô¼º·¢³öÈ¥µÄËùÓĞÈÎÎñ (Key: ±¾µØÈÎÎñID)
-    std::mutex sendTaskMutex;                     // ±£»¤·¢ËÍ×ÖµäµÄËø
-    std::atomic<int> localTaskIdCounter{ 1 };     // »Ö¸´±¾µØ¶ÌºÅ·¢ºÅÆ÷
+    std::map<int, SendTask> sendingTasks; // è®°å½•è‡ªå·±å‘å‡ºå»çš„æ‰€æœ‰ä»»åŠ¡ (Key: æœ¬åœ°ä»»åŠ¡ID)
+    std::mutex sendTaskMutex;                     // ä¿æŠ¤å‘é€å­—å…¸çš„é”
+    std::atomic<int> localTaskIdCounter{ 1 };     // æ¢å¤æœ¬åœ°çŸ­å·å‘å·å™¨
     
-    // ================== ¡¾ĞÂÔö£ºWindows Ô­Éú UUID Éú³ÉÆ÷¡¿ ==================
-    // Éú³É¸ñÊ½Èç: "550e8400-e29b-41d4-a716-446655440000" µÄÈ«ÇòÎ¨Ò»×Ö·û´®
+    // ================== ã€æ–°å¢ï¼šWindows åŸç”Ÿ UUID ç”Ÿæˆå™¨ã€‘ ==================
+    // ç”Ÿæˆæ ¼å¼å¦‚: "550e8400-e29b-41d4-a716-446655440000" çš„å…¨çƒå”¯ä¸€å­—ç¬¦ä¸²
     std::string GenerateStringUUID() {
         UUID uuid;
-        // 1. µ÷ÓÃ Windows API ´´½¨ UUID
-        if (UuidCreate(&uuid) != RPC_S_OK) return "uuid_error"; // ¼«Æäº±¼ûµÄ´íÎó
+        // 1. è°ƒç”¨ Windows API åˆ›å»º UUID
+        if (UuidCreate(&uuid) != RPC_S_OK) return "uuid_error"; // æå…¶ç½•è§çš„é”™è¯¯
 
         unsigned char* uuidStrRaw = nullptr;
-        // 2. ½«¶ş½øÖÆ UUID ×ª»»Îª×Ö·û´®
+        // 2. å°†äºŒè¿›åˆ¶ UUID è½¬æ¢ä¸ºå­—ç¬¦ä¸²
         if (UuidToStringA(&uuid, &uuidStrRaw) != RPC_S_OK) return "uuid_string_error";
 
         std::string finalUuid(reinterpret_cast<char*>(uuidStrRaw));
 
-        // 3. ±ØĞë£¡µ÷ÓÃ Windows API ÊÍ·Å·ÖÅäµÄ×Ö·û´®ÄÚ´æ£¬·ÀÖ¹ÄÚ´æĞ¹Â©£¡
+        // 3. å¿…é¡»ï¼è°ƒç”¨ Windows API é‡Šæ”¾åˆ†é…çš„å­—ç¬¦ä¸²å†…å­˜ï¼Œé˜²æ­¢å†…å­˜æ³„æ¼ï¼
         RpcStringFreeA(&uuidStrRaw);
         return finalUuid;
     }
     // =========================================================================
 
-    // ================== ¡¾ĞÂÔö£ººËĞÄÍøÂçÊÕ·¢ÒıÇæ¡¿ ==================
+    // ================== ã€æ–°å¢ï¼šWindows è·¯å¾„ç¿»è¯‘å®˜ã€‘ ==================
+    // ä¸“é—¨æŠŠ UTF-8 çš„è·¯å¾„ï¼Œç¿»è¯‘æˆ Windows ç¡¬ç›˜èƒ½çœ‹æ‡‚çš„ UTF-16 (å®½å­—ç¬¦)
+    std::wstring Utf8ToWstring(const std::string& utf8Str) {
+        if (utf8Str.empty()) return L"";
+        int size_needed = MultiByteToWideChar(CP_UTF8, 0, &utf8Str[0], (int)utf8Str.size(), NULL, 0);
+        std::wstring wstrTo(size_needed, 0);
+        MultiByteToWideChar(CP_UTF8, 0, &utf8Str[0], (int)utf8Str.size(), &wstrTo[0], size_needed);
+        return wstrTo;
+    }
+    // =================================================================
+
+    // ================== ã€æ–°å¢ï¼šæ ¸å¿ƒç½‘ç»œæ”¶å‘å¼•æ“ã€‘ ==================
     bool SendPacket(SOCKET sock, const std::string& msg) {
         if (msg.empty()) return true;
         uint16_t net_len = htons(static_cast<uint16_t>(msg.length()));
@@ -90,7 +101,7 @@ private:
         packet.append(reinterpret_cast<char*>(&net_len), 2);
         packet.append(msg);
 
-        // ¡¾ºËĞÄĞŞ¸Ä¡¿£º¼ÓÉÏ·¢ËÍËø£¬±£Ö¤¶àÏß³Ì²¢·¢·¢ËÍÊ±µÄ¾ø¶Ô°²È«£¡
+        // ã€æ ¸å¿ƒä¿®æ”¹ã€‘ï¼šåŠ ä¸Šå‘é€é”ï¼Œä¿è¯å¤šçº¿ç¨‹å¹¶å‘å‘é€æ—¶çš„ç»å¯¹å®‰å…¨ï¼
         std::lock_guard<std::mutex> lock(sendMutex);
 
         int totalSent = 0;
@@ -134,38 +145,38 @@ private:
     }
     // ================================================================
 
-    // ÖÇÄÜÊäÈëº¯Êı£ºÒ»±ßµÈ¼üÅÌ´ò×Ö£¬Ò»±ß¶¢½ô·şÎñÆ÷
+    // æ™ºèƒ½è¾“å…¥å‡½æ•°ï¼šä¸€è¾¹ç­‰é”®ç›˜æ‰“å­—ï¼Œä¸€è¾¹ç›¯ç´§æœåŠ¡å™¨
     bool GetInputWithMonitor(std::string& input) {
         input.clear();
         while (true) {
-            // 1. ¼ì²é·şÎñÆ÷ÊÇ·ñ·¢À´ÁË³¬Ê±Ö¸Áî (RESET_TIMEOUT)
+            // 1. æ£€æŸ¥æœåŠ¡å™¨æ˜¯å¦å‘æ¥äº†è¶…æ—¶æŒ‡ä»¤ (RESET_TIMEOUT)
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(clientSocket, &readfds);
-            timeval tv = { 0, 50000 }; // 50ºÁÃë³¬Ê±
+            timeval tv = { 0, 50000 }; // 50æ¯«ç§’è¶…æ—¶
             if (select(0, &readfds, NULL, NULL, &tv) > 0) {
                 char buf[256] = { 0 };
-                int r = recv(clientSocket, buf, sizeof(buf) - 1, MSG_PEEK); // Ö»Íµ¿´Ò»ÑÛ£¬²»È¡×ß
+                int r = recv(clientSocket, buf, sizeof(buf) - 1, MSG_PEEK); // åªå·çœ‹ä¸€çœ¼ï¼Œä¸å–èµ°
                 if (r <= 0) return false;
                 if (std::string(buf).find("RESET_TIMEOUT") != std::string::npos) {
-                    return false; // ·¢ÏÖ³¬Ê±ĞÅºÅ£¡Á¢¿ÌÖĞ¶ÏÊäÈë
+                    return false; // å‘ç°è¶…æ—¶ä¿¡å·ï¼ç«‹åˆ»ä¸­æ–­è¾“å…¥
                 }
             }
 
-            // 2. ¼ì²éÓÃ»§ÊÇ·ñ°´ÁË¼üÅÌ
+            // 2. æ£€æŸ¥ç”¨æˆ·æ˜¯å¦æŒ‰äº†é”®ç›˜
             if (_kbhit()) {
                 char c = _getch();
-                if (c == '\r') { // »Ø³µ¼ü
+                if (c == '\r') { // å›è½¦é”®
                     std::cout << std::endl;
                     return true;
                 }
-                else if (c == '\b') { // ÍË¸ñ¼ü
+                else if (c == '\b') { // é€€æ ¼é”®
                     if (!input.empty()) {
                         input.pop_back();
                         std::cout << "\b \b";
                     }
                 }
-                else { // Õı³£×Ö·û
+                else { // æ­£å¸¸å­—ç¬¦
                     input += c;
                     std::cout << c;
                 }
@@ -173,7 +184,7 @@ private:
         }
     }
 
-    // ================== ¡¾ĞÂÔö£ºBase64 ±à½âÂëÒıÇæ¡¿ ==================
+    // ================== ã€æ–°å¢ï¼šBase64 ç¼–è§£ç å¼•æ“ã€‘ ==================
     const std::string base64_chars =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
@@ -256,10 +267,10 @@ private:
     void ReceiveMessages() {
         while (isConnected) {
             std::string msg;
-            int r = RecvPacket(clientSocket, msg); // ÓÃ°üÒıÇæÌæ»»Ô­Éú recv
+            int r = RecvPacket(clientSocket, msg); // ç”¨åŒ…å¼•æ“æ›¿æ¢åŸç”Ÿ recv
 
             if (r == 1) {
-                // ================== ¡¾ÖÕ¼«½ø»¯£º»ùÓÚÁªºÏ Key µÄ²¢·¢¹şÏ£½ÓÊÕÒıÇæ¡¿ ==================
+                // ================== ã€ç»ˆæè¿›åŒ–ï¼šåŸºäºè”åˆ Key çš„å¹¶å‘å“ˆå¸Œæ¥æ”¶å¼•æ“ã€‘ ==================
                 if (msg.find("FILE_REQ|") == 0) {
                     auto parts = SplitString(msg, "|");
                     if (parts.size() >= 6) {
@@ -268,16 +279,16 @@ private:
                         std::string fName = parts[4];
                         std::string fSize = parts[5];
 
-                        // ¡¾È«ÇòÎ¨Ò» Key¡¿
+                        // ã€å…¨çƒå”¯ä¸€ Keyã€‘
                         std::string globalKey = senderId + "_" + taskId;
 
                         std::lock_guard<std::mutex> lock(taskMutex);
 
-                        // ÎïÀíÎÄ¼şÃüÃûÒ²´øÉÏÕâ¸öÉñÊ¥µÄ·À±¬¶Ü
+                        // ç‰©ç†æ–‡ä»¶å‘½åä¹Ÿå¸¦ä¸Šè¿™ä¸ªç¥åœ£çš„é˜²çˆ†ç›¾
                         std::string safeFileName = "recv_" + globalKey + "_" + fName;
                         receivingTasks[globalKey] = safeFileName;
 
-                        std::cout << "\n[ÎÄ¼ş´«Êä] ¶££¡ÊÕµ½À´×Ô [" << senderId << "] µÄĞÂÈÎÎñ #" << taskId << ": " << fName << "\n" << currentPrompt;
+                        std::cout << "\n[æ–‡ä»¶ä¼ è¾“] å®ï¼æ”¶åˆ°æ¥è‡ª [" << senderId << "] çš„æ–°ä»»åŠ¡ #" << taskId << ": " << fName << "\n" << currentPrompt;
 
                         std::ofstream ofs(safeFileName, std::ios::binary | std::ios::trunc);
                         ofs.close();
@@ -316,7 +327,7 @@ private:
                         }
 
                         if (!localFile.empty()) {
-                            std::cout << "\n[ÎÄ¼ş´«Êä] ÈÎÎñÍê³É£¡ÎÄ¼şÒÑ±£´æÎª: " << localFile << "\n" << currentPrompt;
+                            std::cout << "\n[æ–‡ä»¶ä¼ è¾“] ä»»åŠ¡å®Œæˆï¼æ–‡ä»¶å·²ä¿å­˜ä¸º: " << localFile << "\n" << currentPrompt;
                             system(("start " + localFile).c_str());
                         }
                     }
@@ -325,14 +336,14 @@ private:
                 else if (msg.find("FILE_ABORT|") == 0) {
                     auto parts = SplitString(msg, "|");
                     if (parts.size() >= 5) {
-                        std::string senderId = parts[2]; // ·¢ËÍ·½
-                        std::string fName = parts[4];    // ÎÄ¼şÃû
+                        std::string senderId = parts[2]; // å‘é€æ–¹
+                        std::string fName = parts[4];    // æ–‡ä»¶å
                         std::string globalKey = parts[2] + "_" + parts[3];
 
                         std::lock_guard<std::mutex> lock(taskMutex);
                         if (receivingTasks.count(globalKey)) {
-                            // ¡¾ÌåÑéÉı¼¶¡¿£º¾«×¼²¥±¨ÊÇË­³·»ØÁËÊ²Ã´ÎÄ¼ş£¡
-                            std::cout << "\n[ÏµÍ³¾¯¸æ] ÓÃ»§ [" << senderId << "] ½ô¼±³·»ØÁËÎÄ¼ş [" << fName << "]£¡ÕıÔÚÏú»Ù²ĞÁôÊı¾İ...\n" << currentPrompt;
+                            // ã€ä½“éªŒå‡çº§ã€‘ï¼šç²¾å‡†æ’­æŠ¥æ˜¯è°æ’¤å›äº†ä»€ä¹ˆæ–‡ä»¶ï¼
+                            std::cout << "\n[ç³»ç»Ÿè­¦å‘Š] ç”¨æˆ· [" << senderId << "] ç´§æ€¥æ’¤å›äº†æ–‡ä»¶ [" << fName << "]ï¼æ­£åœ¨é”€æ¯æ®‹ç•™æ•°æ®...\n" << currentPrompt;
                             std::remove(receivingTasks[globalKey].c_str());
                             receivingTasks.erase(globalKey);
                         }
@@ -342,16 +353,16 @@ private:
                 else if (msg.find("FILE_OFFLINE|") == 0) {
                     auto parts = SplitString(msg, "|");
                     if (parts.size() >= 2) {
-                        std::string failedUuid = parts[1]; // ·şÎñ¶ËÍË»ØµÄ UUID ¿ìµİµ¥ºÅ
+                        std::string failedUuid = parts[1]; // æœåŠ¡ç«¯é€€å›çš„ UUID å¿«é€’å•å·
 
                         std::lock_guard<std::mutex> lock(sendTaskMutex);
-                        // ±éÀú¶ÌºÅ×Öµä£¬¾¾³öÄÇ¸öµ×²ã UUID Æ¥ÅäµÄÈÎÎñ
+                        // éå†çŸ­å·å­—å…¸ï¼Œæªå‡ºé‚£ä¸ªåº•å±‚ UUID åŒ¹é…çš„ä»»åŠ¡
                         for (auto& pair : sendingTasks) {
                             if (pair.second.globalUuid == failedUuid) {
-                                // Èç¹û»¹Ã»±»É²³µ£¬ÏµÍ³´úÀÍ£¬×Ô¶¯À­ÊÖÉ²£¡
+                                // å¦‚æœè¿˜æ²¡è¢«åˆ¹è½¦ï¼Œç³»ç»Ÿä»£åŠ³ï¼Œè‡ªåŠ¨æ‹‰æ‰‹åˆ¹ï¼
                                 if (!*(pair.second.isCancelling)) {
                                     *(pair.second.isCancelling) = true;
-                                    std::cout << "\n[ÏµÍ³¾¯¸æ] ÈÎÎñ #" << pair.first << " µÄÄ¿±êÒâÍâÀëÏß£¬¸Ã´«ÊäÒÑ±»ÏµÍ³×Ô¶¯ÖÕÖ¹£¡\n" << currentPrompt;
+                                    std::cout << "\n[ç³»ç»Ÿè­¦å‘Š] ä»»åŠ¡ #" << pair.first << " çš„ç›®æ ‡æ„å¤–ç¦»çº¿ï¼Œè¯¥ä¼ è¾“å·²è¢«ç³»ç»Ÿè‡ªåŠ¨ç»ˆæ­¢ï¼\n" << currentPrompt;
                                 }
                                 break;
                             }
@@ -359,22 +370,22 @@ private:
                     }
                     continue;
                 }
-                // ================== ¡¾ĞÂÔö£º»ùÓÚËÀÍöĞû¸æµÄÖÕ¼«·ÀÓù¡¿ ==================
-                // ¡¾°²È«ĞŞ¸´¡¿£ºÊ¹ÓÃ find Ìæ´ú substr ·ÀÖ¹¶ÌÏûÏ¢Ô½½ç±ÀÀ££¡
+                // ================== ã€æ–°å¢ï¼šåŸºäºæ­»äº¡å®£å‘Šçš„ç»ˆæé˜²å¾¡ã€‘ ==================
+                // ã€å®‰å…¨ä¿®å¤ã€‘ï¼šä½¿ç”¨ find æ›¿ä»£ substr é˜²æ­¢çŸ­æ¶ˆæ¯è¶Šç•Œå´©æºƒï¼
                 else if (msg.find("OFFLINE:") == 0) {
                     std::string offlineUserId = msg.substr(8);
 
-                    // 1. ´òÓ¡ÁÄÌìÊÒÏÂÏßÌáÊ¾
-                    std::cout << "\n[ÏµÍ³ÌáÊ¾] ÓÃ»§ [" << offlineUserId << "] ÀëÏßÁË¡£\n" << currentPrompt;
+                    // 1. æ‰“å°èŠå¤©å®¤ä¸‹çº¿æç¤º
+                    std::cout << "\n[ç³»ç»Ÿæç¤º] ç”¨æˆ· [" << offlineUserId << "] ç¦»çº¿äº†ã€‚\n" << currentPrompt;
 
-                    // 2. É¨µØÉ®³ö¶¯£ºÇåÀí¸ÃËÀÕßÁôÏÂµÄËùÓĞ²ĞÈ±ÎÄ¼ş£¡
+                    // 2. æ‰«åœ°åƒ§å‡ºåŠ¨ï¼šæ¸…ç†è¯¥æ­»è€…ç•™ä¸‹çš„æ‰€æœ‰æ®‹ç¼ºæ–‡ä»¶ï¼
                     std::lock_guard<std::mutex> lock(taskMutex);
                     for (auto it = receivingTasks.begin(); it != receivingTasks.end(); ) {
                         std::string key = it->first;
                         std::string prefix = offlineUserId + "_";
 
                         if (key.find(prefix) == 0) {
-                            std::cout << "[ÏµÍ³ÇåÀí] ¼ì²âµ½·¢ËÍ·½ [" << offlineUserId << "] Òì³£¶ÏÏß£¡ÒÑ×Ô¶¯Ïú»ÙÆä²ĞÈ±ÎÄ¼ş: " << it->second << "\n" << currentPrompt;
+                            std::cout << "[ç³»ç»Ÿæ¸…ç†] æ£€æµ‹åˆ°å‘é€æ–¹ [" << offlineUserId << "] å¼‚å¸¸æ–­çº¿ï¼å·²è‡ªåŠ¨é”€æ¯å…¶æ®‹ç¼ºæ–‡ä»¶: " << it->second << "\n" << currentPrompt;
                             std::remove(it->second.c_str());
                             it = receivingTasks.erase(it);
                         }
@@ -386,11 +397,11 @@ private:
                 }
                 // =========================================================================
 
-                // ¡¾°²È«ĞŞ¸´¡¿£ºÆÕÍ¨ÏûÏ¢ÅĞ¶¨£¬Ê¹ÓÃ find Ìæ´ú substr 
+                // ã€å®‰å…¨ä¿®å¤ã€‘ï¼šæ™®é€šæ¶ˆæ¯åˆ¤å®šï¼Œä½¿ç”¨ find æ›¿ä»£ substr 
                 if (msg.find("NICK_ACK:") == 0) {
                     std::string newName = msg.substr(9);
                     currentPrompt = "[" + newName + "] > ";
-                    std::cout << "\n[ÏµÍ³ÌáÊ¾]: ÄãµÄ±¾µØÌáÊ¾·ûÒÑÍ¬²½¸üĞÂ¡£\n" << currentPrompt;
+                    std::cout << "\n[ç³»ç»Ÿæç¤º]: ä½ çš„æœ¬åœ°æç¤ºç¬¦å·²åŒæ­¥æ›´æ–°ã€‚\n" << currentPrompt;
                 }
                 else {
                     std::cout << "\n" << msg << "\n" << currentPrompt;
@@ -398,21 +409,21 @@ private:
             }
             else {
                 if (isConnected) {
-                    // ¡¾¹Ø¼üĞŞ¸´ 3¡¿£ºÊÓ¾õºäÕ¨£¡ÓÃ¼«ÆäĞÑÄ¿µÄ±ß¿ò´òÆÆ getline ´øÀ´µÄÊÓ¾õÃ¤Çø
+                    // ã€å…³é”®ä¿®å¤ 3ã€‘ï¼šè§†è§‰è½°ç‚¸ï¼ç”¨æå…¶é†’ç›®çš„è¾¹æ¡†æ‰“ç ´ getline å¸¦æ¥çš„è§†è§‰ç›²åŒº
                     std::cout << "\n\n==================================================" << std::endl;
-                    std::cout << " [ÖÂÃü´íÎó] Óë·şÎñ¶ËµÄÁ¬½ÓÒÑÎïÀí¶Ï¿ª£¡·şÎñÆ÷ÒÑå´»ú£¡" << std::endl;
+                    std::cout << " [è‡´å‘½é”™è¯¯] ä¸æœåŠ¡ç«¯çš„è¿æ¥å·²ç‰©ç†æ–­å¼€ï¼æœåŠ¡å™¨å·²å®•æœºï¼" << std::endl;
                     std::cout << "==================================================\n" << std::endl;
 
                     EmergencyCleanup();
 
-                    std::cout << "[ÏµÍ³ÇåÀí] ¼ì²âµ½¶ÏÍø£¬ÒÑ×Ô¶¯Ïú»ÙËùÓĞ²ĞÈ±ÎÄ¼ş¡£\n";
+                    std::cout << "[ç³»ç»Ÿæ¸…ç†] æ£€æµ‹åˆ°æ–­ç½‘ï¼Œå·²è‡ªåŠ¨é”€æ¯æ‰€æœ‰æ®‹ç¼ºæ–‡ä»¶ã€‚\n";
 
-                    // ¸æËß±» getline ¿¨×¡µÄÓÃ»§¸ÃÔõÃ´×ö
-                    std::cout << "\nÇë°´»Ø³µ¼ü (Enter) ÍË³ö³ÌĞò...\n";
+                    // å‘Šè¯‰è¢« getline å¡ä½çš„ç”¨æˆ·è¯¥æ€ä¹ˆåš
+                    std::cout << "\nè¯·æŒ‰å›è½¦é”® (Enter) é€€å‡ºç¨‹åº...\n";
 
                     isConnected = false;
                 }
-                break; // ÍË³ö½ÓÊÕÑ­»·
+                break; // é€€å‡ºæ¥æ”¶å¾ªç¯
         }
         }
     }
@@ -428,22 +439,22 @@ public:
     }
 
     void EmergencyCleanup() {
-        // 1. ½ÓÊÕ·½ÇåÀí²ĞÈ±ÎÄ¼ş
+        // 1. æ¥æ”¶æ–¹æ¸…ç†æ®‹ç¼ºæ–‡ä»¶
         {
             std::lock_guard<std::mutex> lock(taskMutex);
             for (const auto& pair : receivingTasks) {
                 std::remove(pair.second.c_str());
             }
-            // ¡¾¹Ø¼üĞŞ¸´¡¿£ºÕ¶²İ³ı¸ù£¡±ØĞëÇå¿Õ×Öµä¡£
-            // ÕâÑùºóÌ¨Ïß³Ì¼´Ê¹¶Áµ½²ĞÁôµÄ CHUNK °ü£¬Ò²»áÒòÎªÔÚ×ÖµäÀïÕÒ²»µ½ Key ¶øÖ±½Ó¶ªÆú£¬¾ø²»»áÖØ½¨ÎÄ¼ş£¡
+            // ã€å…³é”®ä¿®å¤ã€‘ï¼šæ–©è‰é™¤æ ¹ï¼å¿…é¡»æ¸…ç©ºå­—å…¸ã€‚
+            // è¿™æ ·åå°çº¿ç¨‹å³ä½¿è¯»åˆ°æ®‹ç•™çš„ CHUNK åŒ…ï¼Œä¹Ÿä¼šå› ä¸ºåœ¨å­—å…¸é‡Œæ‰¾ä¸åˆ° Key è€Œç›´æ¥ä¸¢å¼ƒï¼Œç»ä¸ä¼šé‡å»ºæ–‡ä»¶ï¼
             receivingTasks.clear();
         }
 
-        // 2. ·¢ËÍ·½ÇåÀíËùÓĞÕıÔÚ·¢ËÍµÄÈÎÎñ
+        // 2. å‘é€æ–¹æ¸…ç†æ‰€æœ‰æ­£åœ¨å‘é€çš„ä»»åŠ¡
         {
             std::lock_guard<std::mutex> lock(sendTaskMutex);
             for (const auto& pair : sendingTasks) {
-                // À­¶ÏÊÖÉ²£¡ÈÃ»¹ÔÚ¸É»îµÄºóÌ¨Ïß³ÌÁ¢¿ÌÖªµÀ×Ô¼º±»´¦¾öÁË£¡
+                // æ‹‰æ–­æ‰‹åˆ¹ï¼è®©è¿˜åœ¨å¹²æ´»çš„åå°çº¿ç¨‹ç«‹åˆ»çŸ¥é“è‡ªå·±è¢«å¤„å†³äº†ï¼
                 *(pair.second.isCancelling) = true;
 
                 if (clientSocket != INVALID_SOCKET) {
@@ -451,7 +462,7 @@ public:
                     SendPacket(clientSocket, abortMsg);
                 }
             }
-            // ·¢ËÍ·½Ò²Ë³ÊÖÇå¿Õ×Öµä£¬±£³ÖÄÚ´æ¾ø¶Ô¸É¾»
+            // å‘é€æ–¹ä¹Ÿé¡ºæ‰‹æ¸…ç©ºå­—å…¸ï¼Œä¿æŒå†…å­˜ç»å¯¹å¹²å‡€
             sendingTasks.clear();
         }
     }
@@ -475,19 +486,19 @@ public:
         return true;
     }
 
-    //Ö÷Ìå¿ò¼Ü¼Ì³ĞµÄÊÇÒ»¸öµÇÂ¼ÏµÍ³
+    //ä¸»ä½“æ¡†æ¶ç»§æ‰¿çš„æ˜¯ä¸€ä¸ªç™»å½•ç³»ç»Ÿ
     bool AuthMenu() {
         while (isConnected) {
             system("cls");
 
             std::cout << "================================\n";
-            std::cout << "     »¶Ó­À´µ½AuroraÁÄÌìÊÒÏµÍ³     \n";
+            std::cout << "     æ¬¢è¿æ¥åˆ°AuroraèŠå¤©å®¤ç³»ç»Ÿ     \n";
             std::cout << "================================\n";
-            std::cout << "1. µÇÂ¼ÕËºÅ\n";
-            std::cout << "2. ×¢²áÕËºÅ\n";
-            std::cout << "3. Íü¼ÇÃÜÂë (ÊÖ»úÑéÖ¤ÂëÖØÖÃ)\n";
-            std::cout << "0. ÍË³ö\n";
-            std::cout << "ÇëÑ¡Ôñ: ";
+            std::cout << "1. ç™»å½•è´¦å·\n";
+            std::cout << "2. æ³¨å†Œè´¦å·\n";
+            std::cout << "3. å¿˜è®°å¯†ç  (æ‰‹æœºéªŒè¯ç é‡ç½®)\n";
+            std::cout << "0. é€€å‡º\n";
+            std::cout << "è¯·é€‰æ‹©: ";
 
             int choice;
             std::cin >> choice;
@@ -495,7 +506,7 @@ public:
             if (std::cin.fail()) {
                 std::cin.clear();
                 std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-                std::cout << "\n[ÌáÊ¾] ÊäÈëÎŞĞ§£¬ÇëÖØĞÂÊäÈë£¡\n\n";
+                std::cout << "\n[æç¤º] è¾“å…¥æ— æ•ˆï¼Œè¯·é‡æ–°è¾“å…¥ï¼\n\n";
                 system("pause");
                 continue;
             }
@@ -505,8 +516,8 @@ public:
             }
             else if (choice == 1) {
                 std::string id, pwd;
-                std::cout << "ÇëÊäÈëÊı×ÖID: "; std::cin >> id;
-                std::cout << "ÇëÊäÈëÃÜÂë: "; std::cin >> pwd;
+                std::cout << "è¯·è¾“å…¥æ•°å­—ID: "; std::cin >> id;
+                std::cout << "è¯·è¾“å…¥å¯†ç : "; std::cin >> pwd;
 
                 std::string req = "LOGIN|" + id + "|" + pwd;
                 SendPacket(clientSocket, req);
@@ -519,12 +530,12 @@ public:
                     myId = id;
                     myName = parts[1];
                     currentPrompt = "[" + myName + "] > ";
-                    std::cout << "\n[ÏµÍ³ÌáÊ¾] µÇÂ¼³É¹¦£¡»¶Ó­»ØÀ´£¬" << myName << "£¡\n\n";
+                    std::cout << "\n[ç³»ç»Ÿæç¤º] ç™»å½•æˆåŠŸï¼æ¬¢è¿å›æ¥ï¼Œ" << myName << "ï¼\n\n";
                     system("pause");
                     return true;
                 }
                 else if (parts.size() >= 2 && parts[0] == "LOGIN_FAIL") {
-                    std::cout << "\n[µÇÂ¼Ê§°Ü] " << parts[1] << "\n\n";
+                    std::cout << "\n[ç™»å½•å¤±è´¥] " << parts[1] << "\n\n";
                     system("pause");
                 }
             }
@@ -538,12 +549,12 @@ public:
                 if (parts.size() >= 2 && parts[0] == "NEXT_ID") {
                     std::string preAssignedId = parts[1];
                     std::cout << "\n======================================\n";
-                    std::cout << "  ÏµÍ³ÎªÄúÔ¤ÁôµÄ×¨ÊôIDÎª£º¡¾ " << preAssignedId << " ¡¿\n";
+                    std::cout << "  ç³»ç»Ÿä¸ºæ‚¨é¢„ç•™çš„ä¸“å±IDä¸ºï¼šã€ " << preAssignedId << " ã€‘\n";
                     std::cout << "======================================\n";
 
                     std::string pwd, name;
-                    std::cout << "ÉèÖÃÃÜÂë: "; std::cin >> pwd;
-                    std::cout << "ÉèÖÃêÇ³Æ: "; std::cin >> name;
+                    std::cout << "è®¾ç½®å¯†ç : "; std::cin >> pwd;
+                    std::cout << "è®¾ç½®æ˜µç§°: "; std::cin >> name;
 
                     std::string req = "REG|" + preAssignedId + "|" + pwd + "|" + name;
                     SendPacket(clientSocket, req);
@@ -554,10 +565,10 @@ public:
 
                     if (regParts.size() >= 2) {
                         if (regParts[0] == "REG_OK") {
-                            std::cout << "\n[¹§Ï²] ×¢²á³É¹¦£¡ÇëÎñ±ØÀÎ¼ÇÄúµÄID£º" << preAssignedId << "\n\n";
+                            std::cout << "\n[æ­å–œ] æ³¨å†ŒæˆåŠŸï¼è¯·åŠ¡å¿…ç‰¢è®°æ‚¨çš„IDï¼š" << preAssignedId << "\n\n";
                         }
                         else {
-                            std::cout << "\n[×¢²áÊ§°Ü] " << regParts[1] << "\n\n";
+                            std::cout << "\n[æ³¨å†Œå¤±è´¥] " << regParts[1] << "\n\n";
                         }
                         system("pause");
                     }
@@ -565,20 +576,20 @@ public:
             }
             else if (choice == 3) {
                 std::string id;
-                std::cout << "\nÇëÊäÈëĞèÒªÕÒ»ØÃÜÂëµÄÊı×ÖID: ";
+                std::cout << "\nè¯·è¾“å…¥éœ€è¦æ‰¾å›å¯†ç çš„æ•°å­—ID: ";
                 std::cin >> id;
 
-                // 1. ·¢ÆğÉêÇë
+                // 1. å‘èµ·ç”³è¯·
                 SendPacket(clientSocket, "FORGOT_PWD|" + id);
-                std::cout << "[ÏµÍ³ÎÂÜ°ÌáÊ¾] ÖØÖÃÇëÇóÒÑ·¢ËÍ£¬ÕıÔÚµÈ´ı·şÎñÆ÷´¦Àí...\n";
+                std::cout << "[ç³»ç»Ÿæ¸©é¦¨æç¤º] é‡ç½®è¯·æ±‚å·²å‘é€ï¼Œæ­£åœ¨ç­‰å¾…æœåŠ¡å™¨å¤„ç†...\n";
 
                 std::string res;
                 RecvPacket(clientSocket, res);
                 std::vector<std::string> parts = SplitString(res, "|");
 
-                // --- ´¦ÀíÏŞÁ÷ÅÅ¶Ó ---
+                // --- å¤„ç†é™æµæ’é˜Ÿ ---
                 if (parts.size() >= 2 && parts[0] == "FORGOT_BUSY") {
-                    std::cout << "\n[ÏµÍ³ÌáÊ¾] " << parts[1] << " (Y/N): ";
+                    std::cout << "\n[ç³»ç»Ÿæç¤º] " << parts[1] << " (Y/N): ";
                     char waitChoice;
                     std::cin >> waitChoice;
 
@@ -594,66 +605,66 @@ public:
                             if (wParts.empty()) continue;
 
                             if (wParts[0] == "WAITING") {
-                                std::cout << "\n[ÏµÍ³ÎÂÜ°ÌáÊ¾] µ±Ç°ÅÅ¶ÓÈËÊı½Ï¶à£¬ÄúÒÑ³É¹¦¼ÓÈë¶ÓÁĞ£¬ÇëÄÍĞÄÅÅ¶ÓµÈ´ı...\n";
+                                std::cout << "\n[ç³»ç»Ÿæ¸©é¦¨æç¤º] å½“å‰æ’é˜Ÿäººæ•°è¾ƒå¤šï¼Œæ‚¨å·²æˆåŠŸåŠ å…¥é˜Ÿåˆ—ï¼Œè¯·è€å¿ƒæ’é˜Ÿç­‰å¾…...\n";
                             }
                             else if (wParts[0] == "WAIT_OK") {
-                                std::cout << "\n[ÏµÍ³ÎÂÜ°ÌáÊ¾] " << wParts[1] << " ÇëµÈ´ı¹ÜÀíÔ±ÉóÅúÏÂ·¢ÑéÖ¤Âë...\n";
+                                std::cout << "\n[ç³»ç»Ÿæ¸©é¦¨æç¤º] " << wParts[1] << " è¯·ç­‰å¾…ç®¡ç†å‘˜å®¡æ‰¹ä¸‹å‘éªŒè¯ç ...\n";
                                 waiting = false;
                             }
                         }
 
-                        // ÅÅ¶Ó³É¹¦ºó£¬ÖØĞÂµÈ´ı FORGOT_OK (¶ÌĞÅ)
+                        // æ’é˜ŸæˆåŠŸåï¼Œé‡æ–°ç­‰å¾… FORGOT_OK (çŸ­ä¿¡)
                         RecvPacket(clientSocket, res);
                         parts = SplitString(res, "|");
                     }
                     else {
-                        // ¡¾ÎÂÜ°ÌáÊ¾ 4¡¿£ºÈ¡ÏûÅÅ¶ÓµÄÌáÊ¾
+                        // ã€æ¸©é¦¨æç¤º 4ã€‘ï¼šå–æ¶ˆæ’é˜Ÿçš„æç¤º
                         SendPacket(clientSocket, "FORGOT_CANCEL|" + id);
-                        std::cout << "\n[ÎÂÜ°ÌáÊ¾] ÄúÒÑÈ¡ÏûÅÅ¶Ó£¬½«ÎªÄú·µ»ØÖ÷²Ëµ¥¡£\n\n";
+                        std::cout << "\n[æ¸©é¦¨æç¤º] æ‚¨å·²å–æ¶ˆæ’é˜Ÿï¼Œå°†ä¸ºæ‚¨è¿”å›ä¸»èœå•ã€‚\n\n";
                         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
                         system("pause");
                         continue;
                     }
                 }
 
-                // --- ´¦ÀíÑéÖ¤ÂëÏÂ·¢ ---
+                // --- å¤„ç†éªŒè¯ç ä¸‹å‘ ---
                 if (parts.size() >= 2 && parts[0] == "FORGOT_OK") {
                     std::string serverCode = parts[1];
-                    // ¡¾ÎÂÜ°ÌáÊ¾ 5¡¿£ºÊÖ»ú¶ÌĞÅµÄÌáÊ¾£¨ÕâÀïÎÒÒÑ¾­°ïÄãÍ¬²½Îª1·ÖÖÓÓĞĞ§ÁË£©
-                    std::cout << "\n[ÊÖ»úÄ£ÄâÆ÷] ¶££¡ÄúÊÕµ½Ò»Ìõ¶ÌĞÅ£ºÑéÖ¤ÂëÎª ¡¾ " << serverCode << " ¡¿£¬1·ÖÖÓÄÚÓĞĞ§¡£\n\n";
+                    // ã€æ¸©é¦¨æç¤º 5ã€‘ï¼šæ‰‹æœºçŸ­ä¿¡çš„æç¤ºï¼ˆè¿™é‡Œæˆ‘å·²ç»å¸®ä½ åŒæ­¥ä¸º1åˆ†é’Ÿæœ‰æ•ˆäº†ï¼‰
+                    std::cout << "\n[æ‰‹æœºæ¨¡æ‹Ÿå™¨] å®ï¼æ‚¨æ”¶åˆ°ä¸€æ¡çŸ­ä¿¡ï¼šéªŒè¯ç ä¸º ã€ " << serverCode << " ã€‘ï¼Œ1åˆ†é’Ÿå†…æœ‰æ•ˆã€‚\n\n";
 
-                    // ¶¨ÒåÒ»¸ö´¦Àí³¬Ê±µÄ¿ìËÙºê
+                    // å®šä¹‰ä¸€ä¸ªå¤„ç†è¶…æ—¶çš„å¿«é€Ÿå®
                     auto handleTimeout = [&]() {
-                        std::cout << "\n\n[ÏµÍ³¾¯±¨] ²Ù×÷ÒÑ³¬Ê± (³¬¹ı1·ÖÖÓ)£¡ÄúµÄÖØÖÃÃû¶îÒÑ±»ÏµÍ³»ØÊÕ¡£\n";
-                        std::cout << "°´ÈÎÒâ¼ü·µ»ØÖ÷²Ëµ¥...\n";
-                        _getch(); // µÈ´ıÓÃ»§Ëæ±ã°´¸ö¼ü
+                        std::cout << "\n\n[ç³»ç»Ÿè­¦æŠ¥] æ“ä½œå·²è¶…æ—¶ (è¶…è¿‡1åˆ†é’Ÿ)ï¼æ‚¨çš„é‡ç½®åé¢å·²è¢«ç³»ç»Ÿå›æ”¶ã€‚\n";
+                        std::cout << "æŒ‰ä»»æ„é”®è¿”å›ä¸»èœå•...\n";
+                        _getch(); // ç­‰å¾…ç”¨æˆ·éšä¾¿æŒ‰ä¸ªé”®
 
-                        // °Ñ·şÎñÆ÷·¢À´µÄ RESET_TIMEOUT È¡×ß£¬ÇåÀíÍøÂç¹ÜµÀ
+                        // æŠŠæœåŠ¡å™¨å‘æ¥çš„ RESET_TIMEOUT å–èµ°ï¼Œæ¸…ç†ç½‘ç»œç®¡é“
                         std::string trash;
                         RecvPacket(clientSocket, trash);
                         };
 
                     std::string inputCode, pwd1, pwd2;
 
-                    std::cout << "ÇëÊäÈë6Î»ÊıÑéÖ¤Âë: ";
+                    std::cout << "è¯·è¾“å…¥6ä½æ•°éªŒè¯ç : ";
                     if (!GetInputWithMonitor(inputCode)) { handleTimeout(); continue; }
 
-                    std::cout << "ÇëÊäÈëĞÂÃÜÂë: ";
+                    std::cout << "è¯·è¾“å…¥æ–°å¯†ç : ";
                     if (!GetInputWithMonitor(pwd1)) { handleTimeout(); continue; }
 
-                    std::cout << "ÇëÔÙ´ÎÈ·ÈÏĞÂÃÜÂë: ";
+                    std::cout << "è¯·å†æ¬¡ç¡®è®¤æ–°å¯†ç : ";
                     if (!GetInputWithMonitor(pwd2)) { handleTimeout(); continue; }
 
-                    // ±¾µØ¶ş´ÎĞ£ÑéÒ»ÖÂĞÔ
+                    // æœ¬åœ°äºŒæ¬¡æ ¡éªŒä¸€è‡´æ€§
                     if (pwd1 != pwd2) {
-                        std::cout << "\n[´íÎóÌáÊ¾] Á½´ÎÊäÈëµÄÃÜÂë²»Ò»ÖÂ£¡ĞŞ¸ÄÒÑÈ¡Ïû¡£\n\n";
-                        // Í¨Öª·şÎñ¶ËÊÍ·ÅÃû¶î
+                        std::cout << "\n[é”™è¯¯æç¤º] ä¸¤æ¬¡è¾“å…¥çš„å¯†ç ä¸ä¸€è‡´ï¼ä¿®æ”¹å·²å–æ¶ˆã€‚\n\n";
+                        // é€šçŸ¥æœåŠ¡ç«¯é‡Šæ”¾åé¢
                         SendPacket(clientSocket, "FORGOT_CANCEL|" + id);
                         system("pause");
                         continue;
                     }
 
-                    // Ìá½»¸ø·şÎñ¶Ë½øĞĞ Redis ÑéÖ¤
+                    // æäº¤ç»™æœåŠ¡ç«¯è¿›è¡Œ Redis éªŒè¯
                     SendPacket(clientSocket, "RESET_PWD|" + id + "|" + inputCode + "|" + pwd1);
 
                     std::string resetRes;
@@ -661,14 +672,14 @@ public:
                     std::vector<std::string> resetParts = SplitString(resetRes, "|");
 
                     if (resetParts.size() >= 2 && resetParts[0] == "RESET_OK") {
-                        std::cout << "\n[¹§Ï²] " << resetParts[1] << "\n\n";
+                        std::cout << "\n[æ­å–œ] " << resetParts[1] << "\n\n";
                     }
                     else if (resetParts.size() >= 2) {
-                        std::cout << "\n[Ê§°Ü] " << resetParts[1] << "\n\n";
+                        std::cout << "\n[å¤±è´¥] " << resetParts[1] << "\n\n";
                     }
                 }
                 else if (parts.size() >= 2 && parts[0] == "FORGOT_FAIL") {
-                    std::cout << "\n[ÇëÇóÊ§°Ü] " << parts[1] << "\n\n";
+                    std::cout << "\n[è¯·æ±‚å¤±è´¥] " << parts[1] << "\n\n";
                 }
 
                 std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
@@ -681,13 +692,13 @@ public:
     void RunChat() {
         system("cls");
         std::cout << "========================================" << std::endl;
-        std::cout << "³É¹¦½øÈëÁÄÌì´óÌü£¡µ±Ç°Éí·İ: " << myName << " (ID:" << myId << ")" << std::endl;
-        std::cout << "¡¾ÈºÁÄ¡¿Ö±½Ó´ò×Ö²¢»Ø³µ" << std::endl;
-        std::cout << "¡¾Ë½ÁÄ¡¿¸ñÊ½: @Ä¿±êID»òêÇ³Æ ÏûÏ¢ÄÚÈİ" << std::endl;
-        std::cout << "¡¾¸ÄÃû¡¿¸ñÊ½: /nick ĞÂÃû×Ö" << std::endl;
-        std::cout << "¡¾´«Êä¡¿¸ñÊ½: /sendfile Ä¿±êID ÎÄ¼şÍêÕûÂ·¾¶ È¡Ïû /cancel [ÈÎÎñºÅ]" << std::endl;
-        std::cout << "¡¾ÈÎÎñ¡¿¸ñÊ½: /tasks" << std::endl;
-        std::cout << "¡¾ÍË³ö¡¿¸ñÊ½: quit" << std::endl;
+        std::cout << "æˆåŠŸè¿›å…¥èŠå¤©å¤§å…ï¼å½“å‰èº«ä»½: " << myName << " (ID:" << myId << ")" << std::endl;
+        std::cout << "ã€ç¾¤èŠã€‘ç›´æ¥æ‰“å­—å¹¶å›è½¦" << std::endl;
+        std::cout << "ã€ç§èŠã€‘æ ¼å¼: @ç›®æ ‡IDæˆ–æ˜µç§° æ¶ˆæ¯å†…å®¹" << std::endl;
+        std::cout << "ã€æ”¹åã€‘æ ¼å¼: /nick æ–°åå­—" << std::endl;
+        std::cout << "ã€ä¼ è¾“ã€‘æ ¼å¼: /sendfile ç›®æ ‡ID æ–‡ä»¶å®Œæ•´è·¯å¾„ å–æ¶ˆ /cancel [ä»»åŠ¡å·]" << std::endl;
+        std::cout << "ã€ä»»åŠ¡ã€‘æ ¼å¼: /tasks" << std::endl;
+        std::cout << "ã€é€€å‡ºã€‘æ ¼å¼: quit" << std::endl;
         std::cout << "========================================" << std::endl;
 
         std::thread(&ChatClient::ReceiveMessages, this).detach();
@@ -699,30 +710,30 @@ public:
             std::getline(std::cin, userInput);
 
             if (userInput == "quit") {
-                std::cout << "\n[ÏµÍ³ÌáÊ¾] ÕıÔÚÖ´ĞĞ°²È«ÍË³öÇåÀí³ÌĞò£¬ÇëÉÔºò...\n";
-                isConnected = false; // ÏÈ¸æËßºóÌ¨½ÓÊÕÏß³Ì×¼±¸ÊÕ¹¤
+                std::cout << "\n[ç³»ç»Ÿæç¤º] æ­£åœ¨æ‰§è¡Œå®‰å…¨é€€å‡ºæ¸…ç†ç¨‹åºï¼Œè¯·ç¨å€™...\n";
+                isConnected = false; // å…ˆå‘Šè¯‰åå°æ¥æ”¶çº¿ç¨‹å‡†å¤‡æ”¶å·¥
 
-                // ¡¾²½Öè 1¡¿£ºÖ÷¶¯ºô½Ğ¼±¾ÈÖĞĞÄ£¡À­¶ÏËùÓĞ·¢ËÍÏß³ÌµÄÊÖÉ²£¬²¢ÏòÍâ·¢Éä FILE_ABORT É²³µ°ü
+                // ã€æ­¥éª¤ 1ã€‘ï¼šä¸»åŠ¨å‘¼å«æ€¥æ•‘ä¸­å¿ƒï¼æ‹‰æ–­æ‰€æœ‰å‘é€çº¿ç¨‹çš„æ‰‹åˆ¹ï¼Œå¹¶å‘å¤–å‘å°„ FILE_ABORT åˆ¹è½¦åŒ…
                 EmergencyCleanup();
 
-                // ¡¾²½Öè 2¡¿£ºÈÃ×Óµ¯·ÉÒ»»á¶ù£¡
-                // ±ØĞëÍ£¶Ù 200 ºÁÃë£¬È·±£Íø¿¨°Ñ¸Õ²ÅÉú³ÉµÄ FILE_ABORT °ü½á½áÊµÊµµØÍÆµ½ÁËÍøÏßÉÏ
+                // ã€æ­¥éª¤ 2ã€‘ï¼šè®©å­å¼¹é£ä¸€ä¼šå„¿ï¼
+                // å¿…é¡»åœé¡¿ 200 æ¯«ç§’ï¼Œç¡®ä¿ç½‘å¡æŠŠåˆšæ‰ç”Ÿæˆçš„ FILE_ABORT åŒ…ç»“ç»“å®å®åœ°æ¨åˆ°äº†ç½‘çº¿ä¸Š
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-                // ¡¾²½Öè 3¡¿£ºÒÅÑÔ·¢ËÍÍê±Ï£¬°²È«¹Ø±Õ·¢ËÍÍ¨µÀ
+                // ã€æ­¥éª¤ 3ã€‘ï¼šé—è¨€å‘é€å®Œæ¯•ï¼Œå®‰å…¨å…³é—­å‘é€é€šé“
                 shutdown(clientSocket, SD_SEND);
 
-                std::cout << "[ÏµÍ³ÌáÊ¾] ÇåÀíÍê±Ï£¬°²È«¶Ï¿ªÁ¬½Ó¡£ÔÙ¼û£¡\n";
+                std::cout << "[ç³»ç»Ÿæç¤º] æ¸…ç†å®Œæ¯•ï¼Œå®‰å…¨æ–­å¼€è¿æ¥ã€‚å†è§ï¼\n";
                 break;
             }
 
             if (userInput == "/tasks") {
                 std::lock_guard<std::mutex> lock(sendTaskMutex);
-                std::cout << "\n--- µ±Ç°·¢ËÍÈÎÎñÁĞ±í ---\n";
-                if (sendingTasks.empty()) std::cout << "µ±Ç°Ã»ÓĞÕıÔÚ·¢ËÍµÄÎÄ¼ş¡£\n";
+                std::cout << "\n--- å½“å‰å‘é€ä»»åŠ¡åˆ—è¡¨ ---\n";
+                if (sendingTasks.empty()) std::cout << "å½“å‰æ²¡æœ‰æ­£åœ¨å‘é€çš„æ–‡ä»¶ã€‚\n";
                 for (const auto& pair : sendingTasks) {
-                    // ¸øÓÃ»§Õ¹Ê¾µÄÓÀÔ¶ÊÇ¶ÌºÅ
-                    std::cout << "ÈÎÎñ#" << pair.first << " -> Ä¿±ê: " << pair.second.targetId << " ÎÄ¼ş: " << pair.second.fileName << "\n";
+                    // ç»™ç”¨æˆ·å±•ç¤ºçš„æ°¸è¿œæ˜¯çŸ­å·
+                    std::cout << "ä»»åŠ¡#" << pair.first << " -> ç›®æ ‡: " << pair.second.targetId << " æ–‡ä»¶: " << pair.second.fileName << "\n";
                 }
                 std::cout << "------------------------\n" << currentPrompt;
                 continue;
@@ -731,39 +742,48 @@ public:
             if (userInput.find("/cancel ") == 0) {
                 int taskIdToCancel = 0;
                 try {
-                    taskIdToCancel = std::stoi(userInput.substr(8)); // ½âÎö¶ÌºÅ£¬±ÈÈç 1
+                    taskIdToCancel = std::stoi(userInput.substr(8)); // è§£æçŸ­å·ï¼Œæ¯”å¦‚ 1
                 }
                 catch (...) {
-                    std::cout << "[´íÎó] ÇëÊäÈëÕıÈ·µÄÈÎÎñ±àºÅ£¬ÀıÈç /cancel 1\n" << currentPrompt;
+                    std::cout << "[é”™è¯¯] è¯·è¾“å…¥æ­£ç¡®çš„ä»»åŠ¡ç¼–å·ï¼Œä¾‹å¦‚ /cancel 1\n" << currentPrompt;
                     continue;
                 }
 
                 std::lock_guard<std::mutex> lock(sendTaskMutex);
                 if (sendingTasks.count(taskIdToCancel)) {
                     *(sendingTasks[taskIdToCancel].isCancelling) = true;
-                    std::cout << "[ÏµÍ³ÌáÊ¾] ÒÑÏòÈÎÎñ#" << taskIdToCancel << " ·¢ËÍÖÕÖ¹Ö¸Áî...\n" << currentPrompt;
+                    std::cout << "[ç³»ç»Ÿæç¤º] å·²å‘ä»»åŠ¡#" << taskIdToCancel << " å‘é€ç»ˆæ­¢æŒ‡ä»¤...\n" << currentPrompt;
                 }
                 else {
-                    std::cout << "[ÏµÍ³ÌáÊ¾] ÕÒ²»µ½ÈÎÎñ#" << taskIdToCancel << "£¡\n" << currentPrompt;
+                    std::cout << "[ç³»ç»Ÿæç¤º] æ‰¾ä¸åˆ°ä»»åŠ¡#" << taskIdToCancel << "ï¼\n" << currentPrompt;
                 }
                 continue;
             }
 
-            // ================== ¡¾ÖÕ¼«ÒıÇæ£º»ùÓÚ UUID µÄÄÚÍâË« ID ²¢·¢·¢ËÍ¡¿ ==================
+            // ================== ã€ç»ˆæå¼•æ“ï¼šåŸºäº UUID çš„å†…å¤–åŒ ID å¹¶å‘å‘é€ã€‘ ==================
             if (userInput.find("/sendfile ") == 0) {
 
                 auto parts = SplitString(userInput, " ");
                 if (parts.size() < 3) {
-                    std::cout << "[´íÎó] ¸ñÊ½²»ÕıÈ·£¡ÇëÊ¹ÓÃ: /sendfile Ä¿±êID ÎÄ¼şÍêÕûÂ·¾¶\n" << currentPrompt;
+                    std::cout << "[é”™è¯¯] æ ¼å¼ä¸æ­£ç¡®ï¼è¯·ä½¿ç”¨: /sendfile ç›®æ ‡ID æ–‡ä»¶å®Œæ•´è·¯å¾„\n" << currentPrompt;
                     continue;
                 }
 
                 std::string targetIdStr = parts[1];
-                std::string filePath = parts[2]; // ×¢Òâ£ºÒªÇóÂ·¾¶ÀïÎŞ¿Õ¸ñ£¬¼ò»¯´¦Àí
+                std::string filePath = parts[2];
 
-                std::ifstream checkFile(filePath, std::ios::binary | std::ios::ate);
+                // ã€é˜²å¼¹ä¿®å¤ 1ã€‘ï¼šå¦‚æœä½ æ˜¯æ‹–æ‹½æ–‡ä»¶è¿›æ¥çš„ï¼Œå»æ‰é¦–å°¾çš„åŒå¼•å·ï¼
+                if (!filePath.empty() && filePath.front() == '"' && filePath.back() == '"') {
+                    filePath = filePath.substr(1, filePath.length() - 2);
+                }
+
+                // ã€é˜²å¼¹ä¿®å¤ 2ã€‘ï¼šå¬å”¤ç¿»è¯‘å®˜ï¼ŒæŠŠä¸­æ–‡è·¯å¾„å˜æˆ Windows è®¤è¯†çš„å®½å­—ç¬¦ï¼
+                std::wstring wFilePath = Utf8ToWstring(filePath);
+
+                // æ³¨æ„è¿™é‡Œä¼ å…¥çš„æ˜¯ç¿»è¯‘åçš„ wFilePath
+                std::ifstream checkFile(wFilePath, std::ios::binary | std::ios::ate);
                 if (!checkFile.is_open()) {
-                    std::cout << "[´íÎó] ÎŞ·¨´ò¿ªÎÄ¼ş£¬Çë¼ì²éÂ·¾¶ÊÇ·ñÕıÈ·£¡\n" << currentPrompt;
+                    std::cout << "[é”™è¯¯] æ— æ³•æ‰“å¼€æ–‡ä»¶ï¼Œè¯·æ£€æŸ¥è·¯å¾„æ˜¯å¦æ­£ç¡®æˆ–æ–‡ä»¶æ˜¯å¦è¢«å ç”¨ï¼\n" << currentPrompt;
                     continue;
                 }
                 std::streamsize fileSize = checkFile.tellg();
@@ -773,30 +793,30 @@ public:
                 size_t slashPos = fileName.find_last_of("/\\");
                 if (slashPos != std::string::npos) fileName = fileName.substr(slashPos + 1);
 
-                // 1. Éú³ÉÄÚÍâË« ID
-                int localId = localTaskIdCounter++; // ¸øÓÃ»§¿´µÄ¶ÌºÅ 1, 2, 3
-                std::string globalUuid = GenerateStringUUID(); // ¸øÍøÂçÓÃµÄ³¤ UUID "550e8400..."
+                int localId = localTaskIdCounter++;
+                std::string globalUuid = GenerateStringUUID();
 
-                // 2. ½«ÈÎÎñ¾«×¼µÇ¼Çµ½±¾µØ×Öµä (Key ±ØĞëÓÃ±¾µØ¶ÌºÅ int)
                 std::shared_ptr<std::atomic<bool>> cancelFlag;
                 {
                     std::lock_guard<std::mutex> lock(sendTaskMutex);
                     SendTask newTask;
                     newTask.targetId = targetIdStr;
                     newTask.fileName = fileName;
-                    newTask.globalUuid = globalUuid; // Òş²Ø UUID µ½½á¹¹Ìå
+                    newTask.globalUuid = globalUuid;
                     sendingTasks[localId] = newTask;
-                    cancelFlag = newTask.isCancelling; // ÌáÈ¡×¨ÊôÉ²³µÏß
+                    cancelFlag = newTask.isCancelling;
                 }
 
-                std::cout << "[ÏµÍ³ÌáÊ¾] ÈÎÎñ#" << localId << " ´´½¨³É¹¦£¡ÕıÔÚ¸ø [" << targetIdStr << "] ºóÌ¨·¢ËÍ [" << fileName << "]...\n" << currentPrompt;
+                std::cout << "[ç³»ç»Ÿæç¤º] ä»»åŠ¡#" << localId << " åˆ›å»ºæˆåŠŸï¼æ­£åœ¨ç»™ [" << targetIdStr << "] åå°å‘é€ [" << fileName << "]...\n" << currentPrompt;
 
-                // 3. ¿ªÆô°á×©×ÓÏß³Ì£¬×¢Òâ´«Èë localId, globalUuid 
-                std::thread([this, targetIdStr, localId, globalUuid, filePath, fileName, fileSize, cancelFlag]() {
-                    std::ifstream file(filePath, std::ios::binary);
+                // ã€é˜²å¼¹ä¿®å¤ 3ã€‘ï¼šæ³¨æ„è¿™é‡ŒæŠŠ wFilePath ä¼ ç»™å­çº¿ç¨‹ï¼
+                std::thread([this, targetIdStr, localId, globalUuid, wFilePath, fileName, fileSize, cancelFlag]() {
+                    // å­çº¿ç¨‹é‡Œä¹Ÿè¦ç”¨ç¿»è¯‘åçš„ wFilePath æ‰“å¼€ï¼
+                    std::ifstream file(wFilePath, std::ios::binary);
+                    if (!file.is_open()) return;
                     if (!file.is_open()) return;
 
-                    // ¡¾ºËĞÄ¸Ä¶¯¡¿£ºĞ­ÒéÉı¼¶£¬ÈûÈë myId ºÍÈ«ÇòÎ¨Ò» globalUuid !
+                    // ã€æ ¸å¿ƒæ”¹åŠ¨ã€‘ï¼šåè®®å‡çº§ï¼Œå¡å…¥ myId å’Œå…¨çƒå”¯ä¸€ globalUuid !
                     std::string reqMsg = "FILE_REQ|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName + "|" + std::to_string(fileSize);
                     SendPacket(clientSocket, reqMsg);
 
@@ -806,57 +826,57 @@ public:
                     std::streamsize totalRead = 0;
                     int lastReportedProgress = 0;
 
-                    // --- ¡¾ºËĞÄÑ­»·¿é£¬ÎŞÈÎºÎÊ¡ÂÔ¡¿ ---
+                    // --- ã€æ ¸å¿ƒå¾ªç¯å—ï¼Œæ— ä»»ä½•çœç•¥ã€‘ ---
                     while (totalRead < fileSize) {
-                        // ¡¾¾«×¼É²³µ¡¿£ºÖ»¿´ÊôÓÚ×Ô¼ºµÄÄÇ¸ùÉ²³µÏß
+                        // ã€ç²¾å‡†åˆ¹è½¦ã€‘ï¼šåªçœ‹å±äºè‡ªå·±çš„é‚£æ ¹åˆ¹è½¦çº¿
                         if (*cancelFlag) {
                             std::string abortMsg = "FILE_ABORT|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName;
                             SendPacket(clientSocket, abortMsg);
-                            std::cout << "\n[ÏµÍ³ÌáÊ¾] ÈÎÎñ#" << localId << " (" << fileName << ") µÄ´«ÊäÒÑ±»ÎïÀíÕ¶¶Ï£¡\n" << currentPrompt;
-                            break; // Ö±½ÓÔÒËéÑ­»·£¬Í£Ö¹´«Êä
+                            std::cout << "\n[ç³»ç»Ÿæç¤º] ä»»åŠ¡#" << localId << " (" << fileName << ") çš„ä¼ è¾“å·²è¢«ç‰©ç†æ–©æ–­ï¼\n" << currentPrompt;
+                            break; // ç›´æ¥ç ¸ç¢å¾ªç¯ï¼Œåœæ­¢ä¼ è¾“
                         }
 
-                        // Ã¿´Î¶ÁÈ¡Ó²ÅÌÇ°Çå¿Õ buffer 
+                        // æ¯æ¬¡è¯»å–ç¡¬ç›˜å‰æ¸…ç©º buffer 
                         std::fill(buffer.begin(), buffer.end(), 0);
                         file.read(reinterpret_cast<char*>(buffer.data()), CHUNK_SIZE);
                         std::streamsize bytesRead = file.gcount();
                         totalRead += bytesRead;
 
-                        // ================== ¡¾ÖÕ¼«ĞŞ¸´£ººÁÎŞÊ¡ÂÔµÄ Base64 ÒıÇæ¡¿ ==================
-                        // ¡¾ÄãËµµÄ´íÎó¾ÍÔÚÕâÀï¡¿£¡¾ø¶Ô²»ÄÜÊ¡ÂÔÕâÒ»ĞĞ´úÂë£¡
-                        // ±ØĞë£¡°Ñ±©Á¦µÄ¶ş½øÖÆÊı¾İÄæÏò×ªÂëÎª°²È«µÄÓ¢ÎÄ×ÖÄ¸ Base64£¬·ñÔòÎŞ·¨Í¨¹ı TCP ·¢ËÍ£¡
+                        // ================== ã€ç»ˆæä¿®å¤ï¼šæ¯«æ— çœç•¥çš„ Base64 å¼•æ“ã€‘ ==================
+                        // ã€ä½ è¯´çš„é”™è¯¯å°±åœ¨è¿™é‡Œã€‘ï¼ç»å¯¹ä¸èƒ½çœç•¥è¿™ä¸€è¡Œä»£ç ï¼
+                        // å¿…é¡»ï¼æŠŠæš´åŠ›çš„äºŒè¿›åˆ¶æ•°æ®é€†å‘è½¬ç ä¸ºå®‰å…¨çš„è‹±æ–‡å­—æ¯ Base64ï¼Œå¦åˆ™æ— æ³•é€šè¿‡ TCP å‘é€ï¼
                         std::string encodedData = Base64Encode(buffer.data(), bytesRead);
                         // =========================================================================
 
-                        // ¡¾Ğ­ÒéÉı¼¶¡¿£º¼ÓÈû globalUuid 
-                        // ÏÖÔÚ£¬ÕâÒ»ĞĞ´úÂëÀïµÄ encodedData ¾ÍÊÇ°Ù·ÖÖ®°Ù¶¨ÒåµÄÁË£¡±àÒëÆ÷ÍêÃÀÍ¨¹ı£¡
+                        // ã€åè®®å‡çº§ã€‘ï¼šåŠ å¡ globalUuid 
+                        // ç°åœ¨ï¼Œè¿™ä¸€è¡Œä»£ç é‡Œçš„ encodedData å°±æ˜¯ç™¾åˆ†ä¹‹ç™¾å®šä¹‰çš„äº†ï¼ç¼–è¯‘å™¨å®Œç¾é€šè¿‡ï¼
                         std::string chunkMsg = "FILE_CHUNK|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + std::to_string(chunkIndex) + "|" + encodedData;
 
                         if (!SendPacket(clientSocket, chunkMsg)) {
-                            std::cout << "\n[ÈÎÎñ#" << localId << "] ÍøÂçÒì³££¬·¢ËÍÊ§°Ü£¡\n" << currentPrompt;
+                            std::cout << "\n[ä»»åŠ¡#" << localId << "] ç½‘ç»œå¼‚å¸¸ï¼Œå‘é€å¤±è´¥ï¼\n" << currentPrompt;
                             break;
                         }
 
                         chunkIndex++;
 
-                        // ¡¾´òÓ¡½ø¶È¡¿£º¸øÓÃ»§¿´¼ò¶ÌµÄ localId
+                        // ã€æ‰“å°è¿›åº¦ã€‘ï¼šç»™ç”¨æˆ·çœ‹ç®€çŸ­çš„ localId
                         int progress = (totalRead * 100) / fileSize;
                         if (progress - lastReportedProgress >= 20 || progress == 100) {
-                            std::cout << "\n[ÈÎÎñ#" << localId << "] ·¢ËÍ½ø¶È: " << progress << "%\n" << currentPrompt;
+                            std::cout << "\n[ä»»åŠ¡#" << localId << "] å‘é€è¿›åº¦: " << progress << "%\n" << currentPrompt;
                             lastReportedProgress = progress;
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     }
                     file.close();
 
-                    // ¡¾¹Ø¼üĞŞ¸´ 2¡¿£ºË«ÖØĞ£Ñé£¡²»½öÒªÃ»±»È¡Ïû£¬¶øÇÒÕæÕı¶ÁÈ¡µÄ×Ö½ÚÊı±ØĞëµÈÓÚÎÄ¼ş×Ü´óĞ¡£¡
+                    // ã€å…³é”®ä¿®å¤ 2ã€‘ï¼šåŒé‡æ ¡éªŒï¼ä¸ä»…è¦æ²¡è¢«å–æ¶ˆï¼Œè€Œä¸”çœŸæ­£è¯»å–çš„å­—èŠ‚æ•°å¿…é¡»ç­‰äºæ–‡ä»¶æ€»å¤§å°ï¼
                     if (!(*cancelFlag) && totalRead >= fileSize) {
                         std::string eofMsg = "FILE_EOF|" + targetIdStr + "|" + myId + "|" + globalUuid + "|" + fileName;
                         SendPacket(clientSocket, eofMsg);
-                        std::cout << "\n[ÈÎÎñ #" << localId << "] ÎÄ¼ş´«Êä´ó¹¦¸æ³É£¡\n" << currentPrompt;
+                        std::cout << "\n[ä»»åŠ¡ #" << localId << "] æ–‡ä»¶ä¼ è¾“å¤§åŠŸå‘Šæˆï¼\n" << currentPrompt;
                     }
 
-                    // ÈÎÎñ½áÊø£¬´òÉ¨Õ½³¡
+                    // ä»»åŠ¡ç»“æŸï¼Œæ‰“æ‰«æˆ˜åœº
                     {
                         std::lock_guard<std::mutex> lock(sendTaskMutex);
                         sendingTasks.erase(localId);
@@ -876,7 +896,7 @@ public:
 BOOL WINAPI ConsoleCtrlHandler(DWORD signal) {
     if (signal == CTRL_CLOSE_EVENT || signal == CTRL_C_EVENT) {
         if (g_appInstance) {
-            // ÍêÃÀ´©Í¸´ÎÔª±Ú£¡Ö±½Óµ÷ÓÃÀàÄÚ²¿µÄ¹«ÓĞ¼±¾Èº¯Êı£¡
+            // å®Œç¾ç©¿é€æ¬¡å…ƒå£ï¼ç›´æ¥è°ƒç”¨ç±»å†…éƒ¨çš„å…¬æœ‰æ€¥æ•‘å‡½æ•°ï¼
             g_appInstance->EmergencyCleanup();
         }
     }
@@ -885,14 +905,18 @@ BOOL WINAPI ConsoleCtrlHandler(DWORD signal) {
 
 
 int main() {
-    // ¡¾ÖÕ¼«ĞŞ¸´¡¿£ºÏò Windows ÏµÍ³×¢²áÎÒÃÇµÄ¡°ÒÅÔ¸À¹½ØÆ÷¡±£¡
-    // Ã»ÓĞÕâÒ»ĞĞ£¬Windows ¸ù±¾²»ÖªµÀÉÏÃæÄÇ¸ö ConsoleCtrlHandler º¯ÊıµÄ´æÔÚ£¡
+    // ã€æ–°å¢é˜²ä¹±ç è¡¥ä¸ã€‘ï¼šå¼ºè¡Œå°† Windows æ§åˆ¶å°çš„è¾“å…¥å’Œè¾“å‡ºæ”¹ä¸º UTF-8 ç¼–ç ï¼
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
+    // ã€ç»ˆæä¿®å¤ã€‘ï¼šå‘ Windows ç³»ç»Ÿæ³¨å†Œæˆ‘ä»¬çš„â€œé—æ„¿æ‹¦æˆªå™¨â€ï¼
+    // æ²¡æœ‰è¿™ä¸€è¡Œï¼ŒWindows æ ¹æœ¬ä¸çŸ¥é“ä¸Šé¢é‚£ä¸ª ConsoleCtrlHandler å‡½æ•°çš„å­˜åœ¨ï¼
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
     ChatClient client("35.201.130.67", 8080);
-    g_appInstance = &client; // ¡¾ºËĞÄ¡¿£º°Ñ´óÃÅÔ¿³×½»¸ø Windows ²Ù×÷ÏµÍ³£¡
+    g_appInstance = &client; // ã€æ ¸å¿ƒã€‘ï¼šæŠŠå¤§é—¨é’¥åŒ™äº¤ç»™ Windows æ“ä½œç³»ç»Ÿï¼
 
     if (!client.Initialize()) {
-        std::cerr << "\n[!] Á¬½Ó·şÎñ¶ËÊ§°Ü! ÇëÈ·±£ÄãÒÑ¾­ÏÈÆô¶¯ÁË·şÎñ¶Ë (Server.exe)¡£" << std::endl;
+        std::cerr << "\n[!] è¿æ¥æœåŠ¡ç«¯å¤±è´¥! è¯·ç¡®ä¿ä½ å·²ç»å…ˆå¯åŠ¨äº†æœåŠ¡ç«¯ (Server.exe)ã€‚" << std::endl;
         system("pause");
         return 0;
     }
@@ -901,8 +925,8 @@ int main() {
         client.RunChat();
     }
 
-    // ¡¾ÓÅ»¯ 1¡¿£ºÍêÃÀµÄÍË³öÌáÊ¾
-    std::cout << "\nµ±Ç°¿Í»§¶ËÒÑ°²È«¶Ï¿ªÁ¬½Ó¡£" << std::endl;
+    // ã€ä¼˜åŒ– 1ã€‘ï¼šå®Œç¾çš„é€€å‡ºæç¤º
+    std::cout << "\nå½“å‰å®¢æˆ·ç«¯å·²å®‰å…¨æ–­å¼€è¿æ¥ã€‚" << std::endl;
     system("pause");
     return 0;
 }
