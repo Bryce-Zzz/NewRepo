@@ -888,7 +888,7 @@ int main() {
     // 【终极修复】：向 Windows 系统注册我们的“遗愿拦截器”！
     // 没有这一行，Windows 根本不知道上面那个 ConsoleCtrlHandler 函数的存在！
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
-    ChatClient client("127.0.0.1", 8080);
+    ChatClient client("35.201.130.67", 8080);
     g_appInstance = &client; // 【核心】：把大门钥匙交给 Windows 操作系统！
 
     if (!client.Initialize()) {

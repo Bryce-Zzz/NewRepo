@@ -77,9 +77,13 @@ private:
         int totalSent = 0;
         int packetLen = packet.length();
         while (totalSent < packetLen) {
+            // 修复后的代码：
+#ifdef _WIN32
             int sent = send(sock, packet.c_str() + totalSent, packetLen - totalSent, 0);
-            if (sent <= 0) return false;
-            totalSent += sent;
+#else
+            // 【核心防御】：加入 MSG_NOSIGNAL，屏蔽 Linux 的死亡信号
+            int sent = send(sock, packet.c_str() + totalSent, packetLen - totalSent, MSG_NOSIGNAL);
+#endif
         }
         return true;
     }
